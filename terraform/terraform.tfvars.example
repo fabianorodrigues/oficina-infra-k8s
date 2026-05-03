@@ -1,0 +1,6 @@
+aws_region          = "us-east-1"
+project_name        = "oficina"
+environment         = "academy"
+ecr_repository_name = "oficina-api"
+ecr_force_delete    = false
+
