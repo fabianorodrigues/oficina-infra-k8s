@@ -2,5 +2,5 @@ aws_region          = "us-east-1"
 project_name        = "oficina"
 environment         = "academy"
 ecr_repository_name = "oficina-api"
+ecr_mutable_alias_tag = "demo-latest"
 ecr_force_delete    = false
-

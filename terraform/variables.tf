@@ -27,6 +27,17 @@ variable "ecr_repository_name" {
   }
 }
 
+variable "ecr_mutable_alias_tag" {
+  description = "Tag alias mutavel permitida no ECR para a imagem mais recente de demonstracao."
+  type        = string
+  default     = "demo-latest"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$", var.ecr_mutable_alias_tag))
+    error_message = "ecr_mutable_alias_tag deve ser uma tag Docker valida, por exemplo demo-latest."
+  }
+}
+
 variable "ecr_force_delete" {
   description = "Permite destruir o repositorio ECR mesmo contendo imagens. O padrao preserva imagens."
   type        = bool
@@ -54,4 +65,3 @@ variable "tagged_image_count_limit" {
     error_message = "tagged_image_count_limit deve ser maior ou igual a 1."
   }
 }
-

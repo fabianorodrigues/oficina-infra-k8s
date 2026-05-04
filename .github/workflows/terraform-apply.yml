@@ -21,6 +21,7 @@ jobs:
       AWS_SESSION_TOKEN: ${{ secrets['AWS_SESSION_TOKEN'] }}
       AWS_REGION: ${{ secrets['AWS_REGION'] }}
       TF_STATE_BUCKET: ${{ secrets['TF_STATE_BUCKET'] }}
+      TF_VAR_ecr_mutable_alias_tag: ${{ vars.IMAGE_ALIAS_TAG || 'demo-latest' }}
 
     steps:
       - name: Checkout
@@ -51,6 +52,11 @@ jobs:
           done
 
           if [ "${missing}" -ne 0 ]; then
+            exit 1
+          fi
+
+          if [[ ! "${TF_VAR_ecr_mutable_alias_tag}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "IMAGE_ALIAS_TAG variable must be a valid Docker image tag."
             exit 1
           fi
 
@@ -142,4 +148,3 @@ jobs:
             echo "ECR repository name does not match Terraform output."
             exit 1
           fi
-
