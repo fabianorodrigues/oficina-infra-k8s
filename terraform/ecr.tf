@@ -6,7 +6,7 @@ resource "aws_ecr_repository" "api" {
 
   image_tag_mutability_exclusion_filter {
     filter_type = "WILDCARD"
-    filter      = "demo-latest"
+    filter      = var.ecr_mutable_alias_tag
   }
 
   image_scanning_configuration {
@@ -57,4 +57,3 @@ resource "aws_ecr_lifecycle_policy" "api" {
     ]
   })
 }
-

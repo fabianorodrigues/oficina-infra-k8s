@@ -15,7 +15,6 @@ Este repositório é responsável por:
 - Migration job;
 - API Gateway;
 - Integração com Lambdas e observabilidade.
-- 
 ## Arquitetura atual
 
 Fluxo atual:
@@ -28,9 +27,9 @@ oficina-api
 
 O Terraform deste repositório cria o ECR. Depois do provisionamento, o output `ecr_repository_url` deve ser configurado como secret `ECR_REPOSITORY_URL` no repositório `oficina-api`.
 
-O workflow futuro do `oficina-api` publicará imagens no ECR com:
+O workflow do `oficina-api` publica imagens no ECR com:
 
-- tag `demo-latest`, usada para a versão mais recente de demonstração;
+- tag alias mutável, com padrão `demo-latest`, usada para a versão mais recente de demonstração;
 - tag única com SHA do commit, usada para rastreabilidade.
 
 ## Recursos provisionados
@@ -48,13 +47,21 @@ Configure os secrets em:
 GitHub > Settings > Secrets and variables > Actions
 ```
 
-| Secret | Descrição | Exemplo |
+| Secret | Descrição |
+|---|---|
+| `AWS_ACCESS_KEY_ID` | Access Key do AWS Academy |
+| `AWS_SECRET_ACCESS_KEY` | Secret Key do AWS Academy |
+| `AWS_SESSION_TOKEN` | Token temporário do AWS Academy |
+| `AWS_REGION` | Região AWS |
+| `TF_STATE_BUCKET` | Bucket S3 para o Terraform State |
+
+Variáveis opcionais no GitHub:
+
+| Variável | Descrição | Padrão |
 |---|---|---|
-| `AWS_ACCESS_KEY_ID` | Access Key do AWS Academy | não versionar |
-| `AWS_SECRET_ACCESS_KEY` | Secret Key do AWS Academy | não versionar |
-| `AWS_SESSION_TOKEN` | Token temporário do AWS Academy | expira |
-| `AWS_REGION` | Região AWS | `<aws-region>` |
-| `TF_STATE_BUCKET` | Bucket S3 para o Terraform State | `<bucket-tfstate>` |
+| `IMAGE_ALIAS_TAG` | Tag alias mutável permitida no ECR | `demo-latest` |
+
+Se `IMAGE_ALIAS_TAG` for alterada no repositório `oficina-api`, use o mesmo valor aqui. O workflow repassa essa variável para o Terraform como `ecr_mutable_alias_tag`.
 
 ## Workflows
 
