@@ -1,5 +1,5 @@
 variable "aws_region" {
-  description = "Regiao AWS usada no AWS Academy Learner Lab."
+  description = "Regiao AWS usada pelo ambiente de validacao."
   type        = string
   default     = "us-east-1"
 }
@@ -11,9 +11,9 @@ variable "project_name" {
 }
 
 variable "environment" {
-  description = "Nome do ambiente usado em nomes e tags."
+  description = "Nome do ambiente usado em tags e metadados."
   type        = string
-  default     = "academy"
+  default     = "dev"
 }
 
 variable "vpc_id" {
@@ -127,13 +127,13 @@ variable "ecr_repository_name" {
 }
 
 variable "ecr_mutable_alias_tag" {
-  description = "Tag alias mutavel permitida no ECR para a imagem mais recente de demonstracao."
+  description = "Tag alias mutavel permitida no ECR para a imagem operacional mais recente."
   type        = string
-  default     = "demo-latest"
+  default     = "latest"
 
   validation {
     condition     = can(regex("^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$", var.ecr_mutable_alias_tag))
-    error_message = "ecr_mutable_alias_tag deve ser uma tag Docker valida, por exemplo demo-latest."
+    error_message = "ecr_mutable_alias_tag deve ser uma tag Docker valida, por exemplo latest."
   }
 }
 

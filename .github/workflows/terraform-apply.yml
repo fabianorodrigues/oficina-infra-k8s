@@ -21,7 +21,7 @@ jobs:
       AWS_SESSION_TOKEN: ${{ secrets['AWS_SESSION_TOKEN'] }}
       AWS_REGION: ${{ secrets['AWS_REGION'] }}
       TF_STATE_BUCKET: ${{ secrets['TF_STATE_BUCKET'] }}
-      TF_VAR_ecr_mutable_alias_tag: ${{ vars.IMAGE_ALIAS_TAG || 'demo-latest' }}
+      TF_VAR_ecr_mutable_alias_tag: ${{ vars.IMAGE_ALIAS_TAG || 'latest' }}
       TF_VAR_vpc_id: ${{ secrets['TF_VAR_vpc_id'] || vars.TF_VAR_vpc_id }}
       TF_VAR_subnet_ids: ${{ secrets['TF_VAR_subnet_ids'] || vars.TF_VAR_subnet_ids }}
       TF_VAR_eks_cluster_role_arn: ${{ secrets['TF_VAR_eks_cluster_role_arn'] || vars.TF_VAR_eks_cluster_role_arn }}
@@ -42,7 +42,6 @@ jobs:
           required_vars=(
             AWS_ACCESS_KEY_ID
             AWS_SECRET_ACCESS_KEY
-            AWS_SESSION_TOKEN
             AWS_REGION
             TF_STATE_BUCKET
             TF_VAR_vpc_id

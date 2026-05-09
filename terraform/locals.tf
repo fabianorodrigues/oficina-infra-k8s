@@ -1,5 +1,5 @@
 locals {
-  eks_node_group_name = "${var.cluster_name}-nodes"
+  eks_node_group_name = "${var.project_name}-node-group"
 
   common_tags = {
     Project     = var.project_name
