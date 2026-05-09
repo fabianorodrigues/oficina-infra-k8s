@@ -1,5 +1,5 @@
 variable "aws_region" {
-  description = "Regiao AWS usada no AWS Academy Learner Lab."
+  description = "Regiao AWS usada pelo ambiente de validacao."
   type        = string
   default     = "us-east-1"
 }
@@ -11,9 +11,108 @@ variable "project_name" {
 }
 
 variable "environment" {
-  description = "Nome do ambiente usado em nomes e tags."
+  description = "Nome do ambiente usado em tags e metadados."
   type        = string
-  default     = "academy"
+  default     = "dev"
+}
+
+variable "vpc_id" {
+  description = "ID da VPC existente criada pelo oficina-infra-db."
+  type        = string
+
+  validation {
+    condition     = can(regex("^vpc-[0-9a-fA-F]+$", var.vpc_id))
+    error_message = "vpc_id deve ser um ID de VPC valido, por exemplo vpc-0123456789abcdef0."
+  }
+}
+
+variable "subnet_ids" {
+  description = "IDs das subnets publicas existentes criadas pelo oficina-infra-db."
+  type        = list(string)
+
+  validation {
+    condition = (
+      length(var.subnet_ids) >= 2 &&
+      length(distinct(var.subnet_ids)) == length(var.subnet_ids) &&
+      alltrue([for subnet_id in var.subnet_ids : can(regex("^subnet-[0-9a-fA-F]+$", subnet_id))])
+    )
+    error_message = "subnet_ids deve conter pelo menos duas subnets validas e sem duplicidade."
+  }
+}
+
+variable "cluster_name" {
+  description = "Nome do cluster EKS."
+  type        = string
+  default     = "oficina-eks"
+
+  validation {
+    condition     = length(var.cluster_name) <= 100 && can(regex("^[0-9A-Za-z][A-Za-z0-9_-]*$", var.cluster_name))
+    error_message = "cluster_name deve ter ate 100 caracteres e conter apenas letras, numeros, hifen ou underscore."
+  }
+}
+
+variable "node_instance_types" {
+  description = "Tipos de instancia usados pelo node group gerenciado."
+  type        = list(string)
+  default     = ["t3.medium"]
+
+  validation {
+    condition     = length(var.node_instance_types) >= 1 && alltrue([for instance_type in var.node_instance_types : length(trimspace(instance_type)) > 0])
+    error_message = "node_instance_types deve conter ao menos um tipo de instancia valido."
+  }
+}
+
+variable "node_min_size" {
+  description = "Quantidade minima de nodes no node group."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.node_min_size >= 0
+    error_message = "node_min_size deve ser maior ou igual a 0."
+  }
+}
+
+variable "node_desired_size" {
+  description = "Quantidade desejada de nodes no node group."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.node_desired_size >= 0
+    error_message = "node_desired_size deve ser maior ou igual a 0."
+  }
+}
+
+variable "node_max_size" {
+  description = "Quantidade maxima de nodes no node group."
+  type        = number
+  default     = 2
+
+  validation {
+    condition     = var.node_max_size >= 1
+    error_message = "node_max_size deve ser maior ou igual a 1."
+  }
+}
+
+variable "eks_cluster_role_arn" {
+  description = "ARN da IAM Role existente usada pelo control plane do EKS. Nao ha fallback automatico."
+  type        = string
+
+  validation {
+    condition     = can(regex("^arn:aws[a-zA-Z-]*:iam::[0-9]{12}:role/.+$", var.eks_cluster_role_arn))
+    error_message = "eks_cluster_role_arn deve ser um ARN valido de IAM Role."
+  }
+}
+
+variable "eks_node_role_arn" {
+  description = "ARN da IAM Role existente usada pelo node group do EKS. Nao ha fallback automatico."
+  type        = string
+
+  validation {
+    condition     = can(regex("^arn:aws[a-zA-Z-]*:iam::[0-9]{12}:role/.+$", var.eks_node_role_arn))
+    error_message = "eks_node_role_arn deve ser um ARN valido de IAM Role."
+  }
 }
 
 variable "ecr_repository_name" {
@@ -28,13 +127,13 @@ variable "ecr_repository_name" {
 }
 
 variable "ecr_mutable_alias_tag" {
-  description = "Tag alias mutavel permitida no ECR para a imagem mais recente de demonstracao."
+  description = "Tag alias mutavel permitida no ECR para a imagem operacional mais recente."
   type        = string
-  default     = "demo-latest"
+  default     = "latest"
 
   validation {
     condition     = can(regex("^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$", var.ecr_mutable_alias_tag))
-    error_message = "ecr_mutable_alias_tag deve ser uma tag Docker valida, por exemplo demo-latest."
+    error_message = "ecr_mutable_alias_tag deve ser uma tag Docker valida, por exemplo latest."
   }
 }
 

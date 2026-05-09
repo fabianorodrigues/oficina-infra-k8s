@@ -13,3 +13,17 @@ output "ecr_registry_id" {
   value       = aws_ecr_repository.api.registry_id
 }
 
+output "cluster_name" {
+  description = "Nome do cluster EKS."
+  value       = aws_eks_cluster.this.name
+}
+
+output "cluster_endpoint" {
+  description = "Endpoint publico da API do cluster EKS."
+  value       = aws_eks_cluster.this.endpoint
+}
+
+output "node_group_name" {
+  description = "Nome do node group gerenciado do EKS."
+  value       = aws_eks_node_group.this.node_group_name
+}

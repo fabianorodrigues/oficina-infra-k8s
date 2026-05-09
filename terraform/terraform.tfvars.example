@@ -1,6 +1,16 @@
-aws_region          = "us-east-1"
-project_name        = "oficina"
-environment         = "academy"
-ecr_repository_name = "oficina-api"
-ecr_mutable_alias_tag = "demo-latest"
-ecr_force_delete    = false
+aws_region            = "us-east-1"
+project_name          = "oficina"
+environment           = "dev"
+ecr_repository_name   = "oficina-api"
+ecr_mutable_alias_tag = "latest"
+ecr_force_delete      = false
+
+vpc_id               = "vpc-0123456789abcdef0"
+subnet_ids           = ["subnet-0123456789abcdef0", "subnet-abcdef01234567890"]
+cluster_name         = "oficina-eks"
+node_instance_types  = ["t3.medium"]
+node_min_size        = 1
+node_desired_size    = 1
+node_max_size        = 2
+eks_cluster_role_arn = "arn:aws:iam::<account-id>:role/<eks-cluster-role>"
+eks_node_role_arn    = "arn:aws:iam::<account-id>:role/<eks-node-role>"
