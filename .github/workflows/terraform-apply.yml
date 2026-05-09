@@ -22,6 +22,10 @@ jobs:
       AWS_REGION: ${{ secrets['AWS_REGION'] }}
       TF_STATE_BUCKET: ${{ secrets['TF_STATE_BUCKET'] }}
       TF_VAR_ecr_mutable_alias_tag: ${{ vars.IMAGE_ALIAS_TAG || 'demo-latest' }}
+      TF_VAR_vpc_id: ${{ secrets['TF_VAR_vpc_id'] || vars.TF_VAR_vpc_id }}
+      TF_VAR_subnet_ids: ${{ secrets['TF_VAR_subnet_ids'] || vars.TF_VAR_subnet_ids }}
+      TF_VAR_eks_cluster_role_arn: ${{ secrets['TF_VAR_eks_cluster_role_arn'] || vars.TF_VAR_eks_cluster_role_arn }}
+      TF_VAR_eks_node_role_arn: ${{ secrets['TF_VAR_eks_node_role_arn'] || vars.TF_VAR_eks_node_role_arn }}
 
     steps:
       - name: Checkout
@@ -41,6 +45,10 @@ jobs:
             AWS_SESSION_TOKEN
             AWS_REGION
             TF_STATE_BUCKET
+            TF_VAR_vpc_id
+            TF_VAR_subnet_ids
+            TF_VAR_eks_cluster_role_arn
+            TF_VAR_eks_node_role_arn
           )
 
           missing=0
@@ -57,6 +65,26 @@ jobs:
 
           if [[ ! "${TF_VAR_ecr_mutable_alias_tag}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
             echo "IMAGE_ALIAS_TAG variable must be a valid Docker image tag."
+            exit 1
+          fi
+
+          if [[ ! "${TF_VAR_vpc_id}" =~ ^vpc-[0-9a-fA-F]+$ ]]; then
+            echo "TF_VAR_vpc_id must be a valid VPC ID."
+            exit 1
+          fi
+
+          if [[ ! "${TF_VAR_subnet_ids}" =~ ^\[.*\]$ ]]; then
+            echo 'TF_VAR_subnet_ids must be a Terraform/JSON list, for example ["subnet-abc","subnet-def"].'
+            exit 1
+          fi
+
+          if [[ ! "${TF_VAR_eks_cluster_role_arn}" =~ ^arn:aws[a-zA-Z-]*:iam::[0-9]{12}:role/.+$ ]]; then
+            echo "TF_VAR_eks_cluster_role_arn must be a valid IAM Role ARN."
+            exit 1
+          fi
+
+          if [[ ! "${TF_VAR_eks_node_role_arn}" =~ ^arn:aws[a-zA-Z-]*:iam::[0-9]{12}:role/.+$ ]]; then
+            echo "TF_VAR_eks_node_role_arn must be a valid IAM Role ARN."
             exit 1
           fi
 
@@ -121,6 +149,60 @@ jobs:
           echo "ecr_repository_name=$(terraform output -raw ecr_repository_name)"
           echo "ecr_repository_url=$(terraform output -raw ecr_repository_url)"
           echo "ecr_registry_id=$(terraform output -raw ecr_registry_id)"
+          echo "cluster_name=$(terraform output -raw cluster_name)"
+          echo "cluster_endpoint=$(terraform output -raw cluster_endpoint)"
+          echo "node_group_name=$(terraform output -raw node_group_name)"
+
+      - name: Validate EKS cluster and node group
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cluster_name="$(terraform output -raw cluster_name)"
+          node_group_name="$(terraform output -raw node_group_name)"
+
+          aws eks wait cluster-active \
+            --name "${cluster_name}" \
+            --region "${AWS_REGION}"
+
+          read -r cluster_status cluster_endpoint < <(
+            aws eks describe-cluster \
+              --name "${cluster_name}" \
+              --region "${AWS_REGION}" \
+              --query 'cluster.[status,endpoint]' \
+              --output text
+          )
+
+          echo "EKS cluster name: ${cluster_name}"
+          echo "EKS cluster status: ${cluster_status}"
+          echo "EKS cluster endpoint: ${cluster_endpoint}"
+
+          if [ "${cluster_status}" != "ACTIVE" ]; then
+            echo "EKS cluster is not ACTIVE."
+            exit 1
+          fi
+
+          aws eks wait nodegroup-active \
+            --cluster-name "${cluster_name}" \
+            --nodegroup-name "${node_group_name}" \
+            --region "${AWS_REGION}"
+
+          read -r node_group_status < <(
+            aws eks describe-nodegroup \
+              --cluster-name "${cluster_name}" \
+              --nodegroup-name "${node_group_name}" \
+              --region "${AWS_REGION}" \
+              --query 'nodegroup.status' \
+              --output text
+          )
+
+          echo "EKS node group name: ${node_group_name}"
+          echo "EKS node group status: ${node_group_status}"
+
+          if [ "${node_group_status}" != "ACTIVE" ]; then
+            echo "EKS node group is not ACTIVE."
+            exit 1
+          fi
 
       - name: Validate ECR repository
         shell: bash
@@ -128,6 +210,7 @@ jobs:
           set -euo pipefail
 
           repository_name="$(terraform output -raw ecr_repository_name)"
+          repository_url="$(terraform output -raw ecr_repository_url)"
 
           read -r name uri registry_id tag_mutability scan_on_push encryption_type < <(
             aws ecr describe-repositories \
@@ -146,5 +229,10 @@ jobs:
 
           if [ "${name}" != "${repository_name}" ]; then
             echo "ECR repository name does not match Terraform output."
+            exit 1
+          fi
+
+          if [ "${uri}" != "${repository_url}" ]; then
+            echo "ECR repository URI does not match Terraform output."
             exit 1
           fi
