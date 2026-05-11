@@ -2,53 +2,66 @@
 
 ## Visão geral
 
-Este repositório provisiona a infraestrutura Kubernetes da Oficina API. Ele é a **etapa 2** da implantação, logo após o `oficina-infra-db`.
+Este repositório provisiona a infraestrutura Kubernetes da solução Oficina API. Ele consome a VPC e as subnets criadas pelo `oficina-infra-db` e entrega o Amazon ECR e o cluster Amazon EKS usados pelo deploy da API.
 
-O Terraform cria o Amazon ECR e o cluster EKS. Em uma etapa posterior, este repositório também será usado para provisionar o API Gateway. O deploy da aplicação não é feito aqui; ele pertence ao `oficina-api`.
+O deploy da aplicação não é feito aqui; ele pertence ao repositório `oficina-api`.
 
-## Ordem de implantação da solução
+## Arquitetura e ordem de implantação
 
-1. `oficina-infra-db`
-2. **`oficina-infra-k8s`**
-3. `oficina-api`
-4. `oficina-auth-lambda`
-5. **`oficina-infra-k8s` novamente para API Gateway**, quando essa etapa estiver implementada
+1. `oficina-infra-db`: cria VPC, subnets, security groups e RDS.
+2. **`oficina-infra-k8s`**: cria ECR, EKS e node group.
+3. `oficina-api`: publica a imagem no ECR, executa migrations e sobe no EKS.
+4. `oficina-auth-lambda`: publica as Lambdas de autenticação e autorização.
+5. **`oficina-infra-k8s`**: etapa futura para API Gateway.
 
-## Responsabilidade
+## Responsabilidade deste repositório
 
-Este repositório é responsável por:
+- Provisionar o repositório ECR `oficina-api`.
+- Provisionar o cluster EKS `oficina-eks`.
+- Provisionar o node group `oficina-node-group`.
+- Gerar outputs usados pelo deploy da API.
+- Preparar a base para a etapa futura de API Gateway.
 
-- provisionar o repositório ECR `oficina-api`;
-- provisionar o cluster EKS `oficina-eks`;
-- provisionar o node group `oficina-node-group`;
-- expor outputs usados pelo `oficina-api`;
-- futuramente, provisionar o API Gateway `oficina-api-gateway`.
+## Integração com os outros repositórios
 
-## Pré-requisitos
+Este repositório consome a rede criada pelo `oficina-infra-db` e gera a infraestrutura usada pelo `oficina-api`.
 
-- `oficina-infra-db` aplicado com sucesso.
-- Outputs `vpc_id` e `subnet_ids` do `oficina-infra-db`.
-- Conta AWS com permissões para ECR, EKS, EC2 tags, IAM pass role e S3.
-- IAM Roles compatíveis com EKS control plane e node group.
-- Terraform instalado para validação local.
-- AWS CLI e `kubectl` instalados para validação.
+### Valores consumidos
+
+| Valor | Origem | Formato esperado |
+|---|---|---|
+| `TF_VAR_vpc_id` | Output `vpc_id` do `oficina-infra-db` | String, exemplo `vpc-abc` |
+| `TF_VAR_subnet_ids` | Output `subnet_ids` do `oficina-infra-db` | Lista JSON, exemplo `["subnet-abc","subnet-def"]` |
+
+### Valores gerados
+
+| Output | Usado por | Como configurar |
+|---|---|---|
+| `ecr_repository_url` | `oficina-api` | `ECR_REPOSITORY_URL` com a URL completa do ECR |
+| `cluster_name` | `oficina-api` | `EKS_CLUSTER_NAME` |
+| `cluster_endpoint` | Validação operacional | Referência do cluster |
+| `node_group_name` | Validação operacional | Referência do node group |
+
+`ecr_repository_url` deve ter o formato completo `<account-id>.dkr.ecr.<region>.amazonaws.com/oficina-api`. Esse valor não é senha, mas expõe conta AWS, região e nome do repositório; por isso, neste projeto, ele pode ser mantido como GitHub Secret no `oficina-api`.
+
+Quando API Gateway for implementado, este repositório também deverá consumir a URL pública da API e os nomes ou ARNs das Lambdas de autenticação.
 
 ## Configuração necessária
 
 Configure os valores em `GitHub > Settings > Secrets and variables > Actions`.
 
-| Nome | Tipo | Origem | Onde configurar | Uso |
-|---|---|---|---|---|
-| `AWS_ACCESS_KEY_ID` | Secret | Credencial AWS do usuário | GitHub Secrets deste repo | Autenticar na AWS |
-| `AWS_SECRET_ACCESS_KEY` | Secret | Credencial AWS do usuário | GitHub Secrets deste repo | Autenticar na AWS |
-| `AWS_SESSION_TOKEN` | Secret | Credencial temporária, se aplicável | GitHub Secrets deste repo | Autenticar com sessão temporária |
-| `AWS_REGION` | Secret | Região escolhida, por exemplo `us-east-1` | GitHub Secrets deste repo | Definir região do Terraform e AWS CLI |
-| `TF_STATE_BUCKET` | Secret | Nome de bucket S3 escolhido pelo usuário | GitHub Secrets deste repo | Armazenar Terraform State remoto |
-| `TF_VAR_vpc_id` | Secret ou Variable | Output `vpc_id` do `oficina-infra-db` | GitHub Secrets ou Variables deste repo | VPC onde o EKS será criado |
-| `TF_VAR_subnet_ids` | Secret ou Variable | Output `subnet_ids` do `oficina-infra-db` | GitHub Secrets ou Variables deste repo | Subnets usadas pelo EKS |
-| `TF_VAR_eks_cluster_role_arn` | Secret ou Variable | ARN criado pelo usuário | GitHub Secrets ou Variables deste repo | Role do control plane do EKS |
-| `TF_VAR_eks_node_role_arn` | Secret ou Variable | ARN criado pelo usuário | GitHub Secrets ou Variables deste repo | Role do node group |
-| `IMAGE_ALIAS_TAG` | Variable opcional | Valor definido pelo usuário | GitHub Variables deste repo | Alias mutável permitido no ECR; padrão `latest` |
+| Nome | Tipo | Uso |
+|---|---|---|
+| `AWS_ACCESS_KEY_ID` | Secret | Autenticar na AWS |
+| `AWS_SECRET_ACCESS_KEY` | Secret | Autenticar na AWS |
+| `AWS_SESSION_TOKEN` | Secret opcional | Autenticar com credencial temporária |
+| `AWS_REGION` | Secret | Região AWS, exemplo `us-east-1` |
+| `TF_STATE_BUCKET` | Secret | Bucket S3 do Terraform State remoto |
+| `TF_VAR_vpc_id` | Secret ou Variable | VPC onde o EKS será criado |
+| `TF_VAR_subnet_ids` | Secret ou Variable | Subnets usadas pelo EKS |
+| `TF_VAR_eks_cluster_role_arn` | Secret ou Variable | Role do control plane do EKS |
+| `TF_VAR_eks_node_role_arn` | Secret ou Variable | Role do node group |
+| `IMAGE_ALIAS_TAG` | Variable opcional | Alias mutável permitido no ECR; padrão `latest` |
 
 Exemplos de ARNs:
 
@@ -57,36 +70,17 @@ arn:aws:iam::<account-id>:role/<eks-cluster-role>
 arn:aws:iam::<account-id>:role/<eks-node-role>
 ```
 
-`latest` é apenas um alias operacional mutável. A rastreabilidade da imagem publicada pelo `oficina-api` é feita pela tag `${GITHUB_SHA}`.
-
 ## Como executar
 
-1. Abra um Pull Request para `main`.
-2. Aguarde o workflow `Terraform Check`.
-3. Após aprovação, faça merge na `main`.
-4. Execute manualmente:
+Em Pull Requests, o workflow `Terraform Check` valida formatação e configuração Terraform.
+
+Após o merge na `main`, execute manualmente:
 
 ```text
 GitHub Actions > Terraform Apply > Run workflow
 ```
 
-O workflow `Terraform Check` roda em Pull Request e executa:
-
-```powershell
-terraform fmt -check -recursive
-terraform init -backend=false
-terraform validate
-```
-
-O workflow `Terraform Apply` é manual e executa:
-
-- validação de secrets e variables obrigatórios;
-- criação ou validação do bucket S3 do state;
-- `terraform init` com backend remoto;
-- `terraform plan -out=tfplan`;
-- `terraform apply -auto-approve tfplan`;
-- exibição dos outputs de ECR e EKS;
-- validação básica do cluster, node group e ECR.
+O workflow prepara o backend remoto, executa `terraform plan`, aplica a infraestrutura e exibe os outputs de ECR e EKS.
 
 ## Como validar
 
@@ -96,21 +90,11 @@ Configure o kubeconfig:
 aws eks update-kubeconfig --name <cluster_name> --region <region>
 ```
 
-Valide os nodes:
+Valide o cluster, os nodes e o ECR:
 
 ```powershell
 kubectl get nodes
-```
-
-Valide o ECR:
-
-```powershell
 aws ecr describe-repositories --repository-names oficina-api --region <region>
-```
-
-Valide os outputs:
-
-```powershell
 terraform output
 ```
 
@@ -119,36 +103,17 @@ Resultado esperado:
 - cluster EKS com status `ACTIVE`;
 - node group com status `ACTIVE`;
 - repositório ECR `oficina-api` criado;
-- tag mutability do ECR imutável com exceção somente para `latest`.
-
-## Outputs para a próxima etapa
-
-| Output | Usado por | Configurar como |
-|---|---|---|
-| `ecr_repository_url` | `oficina-api` | `ECR_REPOSITORY_URL` |
-| `cluster_name` | `oficina-api` | `EKS_CLUSTER_NAME` |
-| `cluster_endpoint` | Validação operacional | Referência do cluster |
-| `node_group_name` | Validação operacional | Referência do node group |
-
-Quando API Gateway for implementado, esta etapa deverá receber:
-
-| Entrada futura | Origem esperada | Uso |
-|---|---|---|
-| `api_load_balancer_url` | Serviço Kubernetes publicado pelo `oficina-api` | Integração do API Gateway com a API |
-| Nome ou ARN da Lambda Auth | `oficina-auth-lambda` | Rota pública de autenticação |
-| Nome ou ARN da Lambda Authorizer | `oficina-auth-lambda` | Autorização JWT |
-
-O output esperado para essa etapa futura será `api_gateway_url`.
+- ECR com tag mutability imutável e exceção operacional para `latest`.
 
 ## Problemas comuns
 
 | Problema | Possível causa | Como resolver |
 |---|---|---|
 | `TF_VAR_vpc_id` inválido | Valor copiado incorretamente do `oficina-infra-db` | Copie o output `vpc_id` novamente |
-| `TF_VAR_subnet_ids` inválido | Lista fora do formato Terraform/JSON | Use formato `["subnet-abc","subnet-def"]` |
+| `TF_VAR_subnet_ids` inválido | Lista fora do formato JSON | Use o formato `["subnet-abc","subnet-def"]` |
 | EKS falha por role | ARN incorreto ou role sem permissões | Revise `TF_VAR_eks_cluster_role_arn` e `TF_VAR_eks_node_role_arn` |
 | `kubectl get nodes` sem acesso | Kubeconfig não atualizado | Rode `aws eks update-kubeconfig` |
-| Push da API falha no ECR | Secret ausente no `oficina-api` | Configure `ECR_REPOSITORY_URL` com o output deste repo |
+| Push da API falha no ECR | Secret ausente no `oficina-api` | Configure `ECR_REPOSITORY_URL` com `ecr_repository_url` |
 
 ## Próxima etapa
 
