@@ -103,9 +103,9 @@ jobs:
           set -euo pipefail
 
           if aws s3api head-bucket --bucket "${TF_STATE_BUCKET}" 2>/dev/null; then
-            echo "Terraform state bucket already exists: ${TF_STATE_BUCKET}"
+            echo "Terraform state bucket already exists."
           else
-            echo "Creating Terraform state bucket: ${TF_STATE_BUCKET}"
+            echo "Creating Terraform state bucket."
 
             if [ "${AWS_REGION}" = "us-east-1" ]; then
               aws s3api create-bucket \
@@ -140,18 +140,6 @@ jobs:
       - name: Terraform apply
         run: terraform apply -auto-approve tfplan
 
-      - name: Show Terraform outputs
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "ecr_repository_name=$(terraform output -raw ecr_repository_name)"
-          echo "ecr_repository_url=$(terraform output -raw ecr_repository_url)"
-          echo "ecr_registry_id=$(terraform output -raw ecr_registry_id)"
-          echo "cluster_name=$(terraform output -raw cluster_name)"
-          echo "cluster_endpoint=$(terraform output -raw cluster_endpoint)"
-          echo "node_group_name=$(terraform output -raw node_group_name)"
-
       - name: Validate EKS cluster and node group
         shell: bash
         run: |
@@ -172,12 +160,13 @@ jobs:
               --output text
           )
 
-          echo "EKS cluster name: ${cluster_name}"
-          echo "EKS cluster status: ${cluster_status}"
-          echo "EKS cluster endpoint: ${cluster_endpoint}"
-
           if [ "${cluster_status}" != "ACTIVE" ]; then
             echo "EKS cluster is not ACTIVE."
+            exit 1
+          fi
+
+          if [ -z "${cluster_endpoint}" ]; then
+            echo "EKS cluster endpoint is empty."
             exit 1
           fi
 
@@ -195,13 +184,12 @@ jobs:
               --output text
           )
 
-          echo "EKS node group name: ${node_group_name}"
-          echo "EKS node group status: ${node_group_status}"
-
           if [ "${node_group_status}" != "ACTIVE" ]; then
             echo "EKS node group is not ACTIVE."
             exit 1
           fi
+
+          echo "EKS cluster and node group validated."
 
       - name: Validate ECR repository
         shell: bash
@@ -219,13 +207,6 @@ jobs:
               --output text
           )
 
-          echo "ECR repository name: ${name}"
-          echo "ECR repository URI: ${uri}"
-          echo "ECR registry ID: ${registry_id}"
-          echo "ECR tag mutability: ${tag_mutability}"
-          echo "ECR scan on push: ${scan_on_push}"
-          echo "ECR encryption: ${encryption_type}"
-
           if [ "${name}" != "${repository_name}" ]; then
             echo "ECR repository name does not match Terraform output."
             exit 1
@@ -235,3 +216,10 @@ jobs:
             echo "ECR repository URI does not match Terraform output."
             exit 1
           fi
+
+          if [ -z "${registry_id}" ] || [ "${tag_mutability}" != "IMMUTABLE_WITH_EXCLUSION" ] || [ "${scan_on_push}" != "True" ] || [ "${encryption_type}" != "AES256" ]; then
+            echo "ECR repository configuration is not valid."
+            exit 1
+          fi
+
+          echo "ECR repository validated."

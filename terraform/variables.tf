@@ -19,9 +19,10 @@ variable "environment" {
 variable "vpc_id" {
   description = "ID da VPC existente criada pelo oficina-infra-db."
   type        = string
+  sensitive   = true
 
   validation {
-    condition     = can(regex("^vpc-[0-9a-fA-F]+$", var.vpc_id))
+    condition     = can(regex("^vpc-[0-9a-fA-F]+$", nonsensitive(var.vpc_id)))
     error_message = "vpc_id deve ser um ID de VPC valido, por exemplo vpc-0123456789abcdef0."
   }
 }
@@ -29,12 +30,13 @@ variable "vpc_id" {
 variable "subnet_ids" {
   description = "IDs das subnets publicas existentes criadas pelo oficina-infra-db."
   type        = list(string)
+  sensitive   = true
 
   validation {
     condition = (
-      length(var.subnet_ids) >= 2 &&
-      length(distinct(var.subnet_ids)) == length(var.subnet_ids) &&
-      alltrue([for subnet_id in var.subnet_ids : can(regex("^subnet-[0-9a-fA-F]+$", subnet_id))])
+      length(nonsensitive(var.subnet_ids)) >= 2 &&
+      length(distinct(nonsensitive(var.subnet_ids))) == length(nonsensitive(var.subnet_ids)) &&
+      alltrue([for subnet_id in nonsensitive(var.subnet_ids) : can(regex("^subnet-[0-9a-fA-F]+$", subnet_id))])
     )
     error_message = "subnet_ids deve conter pelo menos duas subnets validas e sem duplicidade."
   }
@@ -98,9 +100,10 @@ variable "node_max_size" {
 variable "eks_cluster_role_arn" {
   description = "ARN da IAM Role existente usada pelo control plane do EKS. Nao ha fallback automatico."
   type        = string
+  sensitive   = true
 
   validation {
-    condition     = can(regex("^arn:aws[a-zA-Z-]*:iam::[0-9]{12}:role/.+$", var.eks_cluster_role_arn))
+    condition     = can(regex("^arn:aws[a-zA-Z-]*:iam::[0-9]{12}:role/.+$", nonsensitive(var.eks_cluster_role_arn)))
     error_message = "eks_cluster_role_arn deve ser um ARN valido de IAM Role."
   }
 }
@@ -108,9 +111,10 @@ variable "eks_cluster_role_arn" {
 variable "eks_node_role_arn" {
   description = "ARN da IAM Role existente usada pelo node group do EKS. Nao ha fallback automatico."
   type        = string
+  sensitive   = true
 
   validation {
-    condition     = can(regex("^arn:aws[a-zA-Z-]*:iam::[0-9]{12}:role/.+$", var.eks_node_role_arn))
+    condition     = can(regex("^arn:aws[a-zA-Z-]*:iam::[0-9]{12}:role/.+$", nonsensitive(var.eks_node_role_arn)))
     error_message = "eks_node_role_arn deve ser um ARN valido de IAM Role."
   }
 }

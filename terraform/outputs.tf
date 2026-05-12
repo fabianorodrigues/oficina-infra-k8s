@@ -6,21 +6,12 @@ output "ecr_repository_name" {
 output "ecr_repository_url" {
   description = "URL do repositorio ECR para build e push da imagem Docker da Oficina API."
   value       = aws_ecr_repository.api.repository_url
-}
-
-output "ecr_registry_id" {
-  description = "ID da registry AWS ECR que contem o repositorio."
-  value       = aws_ecr_repository.api.registry_id
+  sensitive   = true
 }
 
 output "cluster_name" {
   description = "Nome do cluster EKS."
   value       = aws_eks_cluster.this.name
-}
-
-output "cluster_endpoint" {
-  description = "Endpoint publico da API do cluster EKS."
-  value       = aws_eks_cluster.this.endpoint
 }
 
 output "node_group_name" {

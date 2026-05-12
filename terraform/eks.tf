@@ -1,21 +1,21 @@
 data "aws_subnet" "selected" {
-  for_each = toset(var.subnet_ids)
+  count = length(nonsensitive(var.subnet_ids))
 
-  id = each.value
+  id = var.subnet_ids[count.index]
 }
 
 resource "aws_ec2_tag" "subnet_cluster" {
-  for_each = toset(var.subnet_ids)
+  count = length(nonsensitive(var.subnet_ids))
 
-  resource_id = each.value
+  resource_id = var.subnet_ids[count.index]
   key         = "kubernetes.io/cluster/${var.cluster_name}"
   value       = "shared"
 }
 
 resource "aws_ec2_tag" "subnet_public_elb" {
-  for_each = toset(var.subnet_ids)
+  count = length(nonsensitive(var.subnet_ids))
 
-  resource_id = each.value
+  resource_id = var.subnet_ids[count.index]
   key         = "kubernetes.io/role/elb"
   value       = "1"
 }
@@ -41,7 +41,7 @@ resource "aws_eks_cluster" "this" {
 
   lifecycle {
     precondition {
-      condition     = alltrue([for subnet in data.aws_subnet.selected : subnet.vpc_id == var.vpc_id])
+      condition     = alltrue([for subnet in data.aws_subnet.selected : subnet.vpc_id == nonsensitive(var.vpc_id)])
       error_message = "Todas as subnets informadas em subnet_ids devem pertencer a vpc_id."
     }
   }
