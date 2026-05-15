@@ -6,3 +6,7 @@ provider "aws" {
   }
 }
 
+provider "aws" {
+  alias  = "iam_untagged"
+  region = var.aws_region
+}

@@ -4,8 +4,8 @@
 
 Este repositório provisiona a camada Kubernetes e a entrada pública da solução Oficina. Ele contém três roots Terraform:
 
-- `terraform`: ECR, EKS, node group, OIDC provider e IAM do AWS Load Balancer Controller.
-- `terraform/addons`: instalação do AWS Load Balancer Controller via Helm e IRSA.
+- `terraform`: ECR, EKS, node group e configuração IAM opcional do AWS Load Balancer Controller.
+- `terraform/addons`: instalação do AWS Load Balancer Controller via Helm em modo `node` ou `irsa`.
 - `terraform/api-gateway`: API Gateway HTTP API com VPC Link para o NLB interno da API.
 
 ## Responsabilidade Deste Repositório
@@ -26,6 +26,7 @@ Valores consumidos:
 | `vpc_id`, `vpc_cidr_block` e subnets | `oficina-infra-db` | EKS, NLB interno e VPC Link |
 | `TF_VAR_eks_cluster_role_arn` | Secret ou Variable | Role existente do control plane do EKS |
 | `TF_VAR_eks_node_role_arn` | Secret ou Variable | Role existente do node group |
+| `TF_VAR_aws_load_balancer_controller_iam_mode` | Variable opcional | Modo IAM do AWS Load Balancer Controller; padrão `node` |
 | `/oficina/{environment}/api/backend-listener-arn` | SSM gerado pelo `oficina-api` | Backend privado do API Gateway |
 | Lambdas publicadas | `oficina-auth-lambda` | Autenticação e authorizer do API Gateway |
 
@@ -61,10 +62,20 @@ Configure no GitHub Actions:
 | `TF_STATE_BUCKET` | Secret | Nome do bucket S3 para state remoto |
 | `TF_VAR_eks_cluster_role_arn` | Secret ou Variable | Role existente do cluster EKS |
 | `TF_VAR_eks_node_role_arn` | Secret ou Variable | Role existente do node group |
+| `TF_VAR_aws_load_balancer_controller_iam_mode` | Variable opcional | `node` ou `irsa`; padrão `node` |
 | `EKS_CLUSTER_NAME` | Variable opcional | Nome do cluster; padrão `oficina-eks` |
 | `ECR_REPOSITORY_NAME` | Variable opcional | Nome do ECR; padrão `oficina-api` |
 | `AUTH_FUNCTION_NAME` | Variable opcional | Nome da Lambda Auth; padrão `oficina-auth-cpf` |
 | `AUTHORIZER_FUNCTION_NAME` | Variable opcional | Nome da Lambda Authorizer; padrão `oficina-jwt-authorizer` |
+
+## Modos do AWS Load Balancer Controller
+
+O AWS Load Balancer Controller pode ser instalado em dois modos:
+
+- `node`: usa permissões já disponíveis no ambiente ou na role dos nós. É o padrão mínimo para validar o provisionamento sem criar IAM OIDC Provider, IAM Policy ou IAM Role adicionais.
+- `irsa`: cria OIDC Provider, IAM Role, IAM Policy e attachment dedicados para o controller. É o modo mais isolado, mas exige permissões para criar recursos IAM/OIDC na conta.
+
+No modo `node`, a role dos nós ou do ambiente precisa ter permissões suficientes para o AWS Load Balancer Controller criar e gerenciar NLB, Target Groups, Listeners e regras necessárias. Se essas permissões não existirem, o controller pode instalar corretamente, mas falhar ao criar o NLB interno da API.
 
 As roles do EKS devem existir antes da execução; o workflow não as cria automaticamente. Use o mesmo `TF_STATE_BUCKET` do `oficina-infra-db`. As keys criadas automaticamente são:
 
