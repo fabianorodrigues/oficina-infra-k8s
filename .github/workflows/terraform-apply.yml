@@ -6,26 +6,33 @@ on:
 permissions:
   contents: read
 
-defaults:
-  run:
-    working-directory: terraform
+concurrency:
+  group: terraform-k8s-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  AWS_ACCESS_KEY_ID: ${{ secrets['AWS_ACCESS_KEY_ID'] }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets['AWS_SECRET_ACCESS_KEY'] }}
+  AWS_SESSION_TOKEN: ${{ secrets['AWS_SESSION_TOKEN'] }}
+  AWS_REGION: ${{ secrets['AWS_REGION'] }}
+  TF_STATE_BUCKET: ${{ secrets['TF_STATE_BUCKET'] }}
+  ENVIRONMENT: ${{ vars.ENVIRONMENT || 'dev' }}
+  PROJECT_NAME: ${{ vars.PROJECT_NAME || 'oficina' }}
+  EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME || 'oficina-eks' }}
+  ECR_REPOSITORY_NAME: ${{ vars.ECR_REPOSITORY_NAME || 'oficina-api' }}
+  TF_VAR_ecr_mutable_alias_tag: ${{ vars.IMAGE_ALIAS_TAG || 'latest' }}
+  TF_VAR_eks_cluster_role_arn: ${{ secrets['TF_VAR_eks_cluster_role_arn'] || vars.TF_VAR_eks_cluster_role_arn }}
+  TF_VAR_eks_node_role_arn: ${{ secrets['TF_VAR_eks_node_role_arn'] || vars.TF_VAR_eks_node_role_arn }}
 
 jobs:
-  apply:
-    name: Apply
+  apply-core:
+    name: Apply core
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
-    env:
-      AWS_ACCESS_KEY_ID: ${{ secrets['AWS_ACCESS_KEY_ID'] }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets['AWS_SECRET_ACCESS_KEY'] }}
-      AWS_SESSION_TOKEN: ${{ secrets['AWS_SESSION_TOKEN'] }}
-      AWS_REGION: ${{ secrets['AWS_REGION'] }}
-      TF_STATE_BUCKET: ${{ secrets['TF_STATE_BUCKET'] }}
-      TF_VAR_ecr_mutable_alias_tag: ${{ vars.IMAGE_ALIAS_TAG || 'latest' }}
-      TF_VAR_vpc_id: ${{ secrets['TF_VAR_vpc_id'] || vars.TF_VAR_vpc_id }}
-      TF_VAR_subnet_ids: ${{ secrets['TF_VAR_subnet_ids'] || vars.TF_VAR_subnet_ids }}
-      TF_VAR_eks_cluster_role_arn: ${{ secrets['TF_VAR_eks_cluster_role_arn'] || vars.TF_VAR_eks_cluster_role_arn }}
-      TF_VAR_eks_node_role_arn: ${{ secrets['TF_VAR_eks_node_role_arn'] || vars.TF_VAR_eks_node_role_arn }}
+    defaults:
+      run:
+        working-directory: terraform
 
     steps:
       - name: Checkout
@@ -34,7 +41,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
 
-      - name: Validate required secrets
+      - name: Validate required configuration
         shell: bash
         run: |
           set -euo pipefail
@@ -44,8 +51,6 @@ jobs:
             AWS_SECRET_ACCESS_KEY
             AWS_REGION
             TF_STATE_BUCKET
-            TF_VAR_vpc_id
-            TF_VAR_subnet_ids
             TF_VAR_eks_cluster_role_arn
             TF_VAR_eks_node_role_arn
           )
@@ -53,7 +58,7 @@ jobs:
           missing=0
           for var_name in "${required_vars[@]}"; do
             if [ -z "${!var_name:-}" ]; then
-              echo "${var_name} secret is required."
+              echo "${var_name} is required."
               missing=1
             fi
           done
@@ -67,16 +72,6 @@ jobs:
             exit 1
           fi
 
-          if [[ ! "${TF_VAR_vpc_id}" =~ ^vpc-[0-9a-fA-F]+$ ]]; then
-            echo "TF_VAR_vpc_id must be a valid VPC ID."
-            exit 1
-          fi
-
-          if [[ ! "${TF_VAR_subnet_ids}" =~ ^\[.*\]$ ]]; then
-            echo 'TF_VAR_subnet_ids must be a Terraform/JSON list, for example ["subnet-abc","subnet-def"].'
-            exit 1
-          fi
-
           if [[ ! "${TF_VAR_eks_cluster_role_arn}" =~ ^arn:aws[a-zA-Z-]*:iam::[0-9]{12}:role/.+$ ]]; then
             echo "TF_VAR_eks_cluster_role_arn must be a valid IAM Role ARN."
             exit 1
@@ -87,7 +82,15 @@ jobs:
             exit 1
           fi
 
-          printf 'TF_VAR_aws_region=%s\n' "${AWS_REGION}" >> "${GITHUB_ENV}"
+          {
+            printf 'TF_VAR_aws_region=%s\n' "${AWS_REGION}"
+            printf 'TF_VAR_remote_state_region=%s\n' "${AWS_REGION}"
+            printf 'TF_VAR_remote_state_bucket=%s\n' "${TF_STATE_BUCKET}"
+            printf 'TF_VAR_project_name=%s\n' "${PROJECT_NAME}"
+            printf 'TF_VAR_environment=%s\n' "${ENVIRONMENT}"
+            printf 'TF_VAR_cluster_name=%s\n' "${EKS_CLUSTER_NAME}"
+            printf 'TF_VAR_ecr_repository_name=%s\n' "${ECR_REPOSITORY_NAME}"
+          } >> "${GITHUB_ENV}"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
@@ -110,116 +113,171 @@ jobs:
             if [ "${AWS_REGION}" = "us-east-1" ]; then
               aws s3api create-bucket \
                 --bucket "${TF_STATE_BUCKET}" \
-                --region "${AWS_REGION}"
+                --region "${AWS_REGION}" >/dev/null
             else
               aws s3api create-bucket \
                 --bucket "${TF_STATE_BUCKET}" \
                 --region "${AWS_REGION}" \
-                --create-bucket-configuration LocationConstraint="${AWS_REGION}"
+                --create-bucket-configuration LocationConstraint="${AWS_REGION}" >/dev/null
             fi
           fi
 
           aws s3api put-bucket-versioning \
             --bucket "${TF_STATE_BUCKET}" \
-            --versioning-configuration Status=Enabled
+            --versioning-configuration Status=Enabled >/dev/null
 
           aws s3api put-bucket-encryption \
             --bucket "${TF_STATE_BUCKET}" \
-            --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+            --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}' >/dev/null
 
           aws s3api put-public-access-block \
             --bucket "${TF_STATE_BUCKET}" \
-            --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+            --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true >/dev/null
 
-      - name: Terraform init
-        run: terraform init -backend-config="bucket=${TF_STATE_BUCKET}" -backend-config="region=${AWS_REGION}"
+      - name: Terraform init core
+        run: terraform init -backend-config="bucket=${TF_STATE_BUCKET}" -backend-config="region=${AWS_REGION}" -backend-config="key=oficina-infra-k8s/${ENVIRONMENT}/core/terraform.tfstate" -backend-config="use_lockfile=true"
 
-      - name: Terraform plan
-        run: terraform plan -out=tfplan
-
-      - name: Terraform apply
-        run: terraform apply -auto-approve tfplan
-
-      - name: Validate EKS cluster and node group
+      - name: Terraform plan core
         shell: bash
         run: |
           set -euo pipefail
 
-          cluster_name="$(terraform output -raw cluster_name)"
-          node_group_name="$(terraform output -raw node_group_name)"
+          if ! terraform plan -out=tfplan >/tmp/terraform-k8s-core-plan.log 2>&1; then
+            echo "Terraform core plan failed."
+            exit 1
+          fi
+
+          echo "Terraform core plan completed."
+
+      - name: Terraform apply core
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! terraform apply -auto-approve tfplan >/tmp/terraform-k8s-core-apply.log 2>&1; then
+            echo "Terraform core apply failed."
+            exit 1
+          fi
+
+          echo "Terraform core apply completed."
+
+      - name: Validate EKS and ECR
+        shell: bash
+        run: |
+          set -euo pipefail
 
           aws eks wait cluster-active \
-            --name "${cluster_name}" \
+            --name "${EKS_CLUSTER_NAME}" \
             --region "${AWS_REGION}"
-
-          read -r cluster_status cluster_endpoint < <(
-            aws eks describe-cluster \
-              --name "${cluster_name}" \
-              --region "${AWS_REGION}" \
-              --query 'cluster.[status,endpoint]' \
-              --output text
-          )
-
-          if [ "${cluster_status}" != "ACTIVE" ]; then
-            echo "EKS cluster is not ACTIVE."
-            exit 1
-          fi
-
-          if [ -z "${cluster_endpoint}" ]; then
-            echo "EKS cluster endpoint is empty."
-            exit 1
-          fi
 
           aws eks wait nodegroup-active \
-            --cluster-name "${cluster_name}" \
-            --nodegroup-name "${node_group_name}" \
+            --cluster-name "${EKS_CLUSTER_NAME}" \
+            --nodegroup-name "${PROJECT_NAME}-node-group" \
             --region "${AWS_REGION}"
 
-          read -r node_group_status < <(
-            aws eks describe-nodegroup \
-              --cluster-name "${cluster_name}" \
-              --nodegroup-name "${node_group_name}" \
-              --region "${AWS_REGION}" \
-              --query 'nodegroup.status' \
-              --output text
-          )
+          aws ecr describe-repositories \
+            --repository-names "${ECR_REPOSITORY_NAME}" \
+            --region "${AWS_REGION}" >/dev/null
 
-          if [ "${node_group_status}" != "ACTIVE" ]; then
-            echo "EKS node group is not ACTIVE."
-            exit 1
-          fi
+          echo "EKS and ECR validated."
 
-          echo "EKS cluster and node group validated."
+  apply-addons:
+    name: Apply addons
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: apply-core
 
-      - name: Validate ECR repository
+    defaults:
+      run:
+        working-directory: terraform/addons
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ env.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Validate cluster access
         shell: bash
         run: |
           set -euo pipefail
 
-          repository_name="$(terraform output -raw ecr_repository_name)"
-          repository_url="$(terraform output -raw ecr_repository_url)"
+          aws eks wait cluster-active \
+            --name "${EKS_CLUSTER_NAME}" \
+            --region "${AWS_REGION}"
 
-          read -r name uri registry_id tag_mutability scan_on_push encryption_type < <(
-            aws ecr describe-repositories \
-              --repository-names "${repository_name}" \
-              --region "${AWS_REGION}" \
-              --query 'repositories[0].[repositoryName,repositoryUri,registryId,imageTagMutability,imageScanningConfiguration.scanOnPush,encryptionConfiguration.encryptionType]' \
-              --output text
-          )
+          aws eks update-kubeconfig --name "${EKS_CLUSTER_NAME}" --region "${AWS_REGION}" >/dev/null
 
-          if [ "${name}" != "${repository_name}" ]; then
-            echo "ECR repository name does not match Terraform output."
+          if ! kubectl auth can-i get deployments -n kube-system >/dev/null; then
+            echo "Falha ao validar AWS Load Balancer Controller."
             exit 1
           fi
 
-          if [ "${uri}" != "${repository_url}" ]; then
-            echo "ECR repository URI does not match Terraform output."
+      - name: Prepare Terraform variables
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          {
+            printf 'TF_VAR_aws_region=%s\n' "${AWS_REGION}"
+            printf 'TF_VAR_remote_state_region=%s\n' "${AWS_REGION}"
+            printf 'TF_VAR_remote_state_bucket=%s\n' "${TF_STATE_BUCKET}"
+            printf 'TF_VAR_project_name=%s\n' "${PROJECT_NAME}"
+            printf 'TF_VAR_environment=%s\n' "${ENVIRONMENT}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Terraform init addons
+        run: terraform init -backend-config="bucket=${TF_STATE_BUCKET}" -backend-config="region=${AWS_REGION}" -backend-config="key=oficina-infra-k8s/${ENVIRONMENT}/addons/terraform.tfstate" -backend-config="use_lockfile=true"
+
+      - name: Terraform plan addons
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! terraform plan -out=tfplan >/tmp/terraform-k8s-addons-plan.log 2>&1; then
+            echo "Terraform addons plan failed."
             exit 1
           fi
 
-          if [ -z "${registry_id}" ] || [ "${tag_mutability}" != "IMMUTABLE_WITH_EXCLUSION" ] || [ "${scan_on_push}" != "True" ] || [ "${encryption_type}" != "AES256" ]; then
-            echo "ECR repository configuration is not valid."
+          echo "Terraform addons plan completed."
+
+      - name: Terraform apply addons
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! terraform apply -auto-approve tfplan >/tmp/terraform-k8s-addons-apply.log 2>&1; then
+            echo "Terraform addons apply failed."
             exit 1
           fi
 
-          echo "ECR repository validated."
+          echo "Terraform addons apply completed."
+
+      - name: Validate AWS Load Balancer Controller
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! kubectl get deployment aws-load-balancer-controller -n kube-system >/dev/null; then
+            echo "Falha ao validar AWS Load Balancer Controller."
+            exit 1
+          fi
+
+          if ! kubectl rollout status deployment/aws-load-balancer-controller -n kube-system --timeout=180s >/dev/null; then
+            echo "Falha ao validar AWS Load Balancer Controller."
+            exit 1
+          fi
+
+          echo "AWS Load Balancer Controller validated."

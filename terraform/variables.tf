@@ -16,29 +16,88 @@ variable "environment" {
   default     = "dev"
 }
 
-variable "vpc_id" {
-  description = "ID da VPC existente criada pelo oficina-infra-db."
+variable "remote_state_bucket" {
+  description = "Bucket S3 do state remoto usado para ler a rede criada pelo oficina-infra-db."
   type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "remote_state_region" {
+  description = "Regiao do bucket S3 do state remoto."
+  type        = string
+  default     = "us-east-1"
+}
+
+variable "db_remote_state_key" {
+  description = "Key do state remoto do oficina-infra-db. Quando vazio, usa oficina-infra-db/{environment}/terraform.tfstate."
+  type        = string
+  default     = ""
+}
+
+variable "override_vpc_id" {
+  description = "Override opcional da VPC. Use apenas quando nao for possivel consumir o remote state."
+  type        = string
+  default     = null
+  nullable    = true
   sensitive   = true
 
   validation {
-    condition     = can(regex("^vpc-[0-9a-fA-F]+$", nonsensitive(var.vpc_id)))
-    error_message = "vpc_id deve ser um ID de VPC valido, por exemplo vpc-0123456789abcdef0."
+    condition     = var.override_vpc_id == null || can(regex("^vpc-[0-9a-fA-F]+$", nonsensitive(var.override_vpc_id)))
+    error_message = "override_vpc_id deve ser null ou um ID de VPC valido."
   }
 }
 
-variable "subnet_ids" {
-  description = "IDs das subnets publicas existentes criadas pelo oficina-infra-db."
+variable "override_public_subnet_ids" {
+  description = "Override opcional das subnets publicas usadas pelo EKS/node group minimo."
   type        = list(string)
+  default     = null
+  nullable    = true
   sensitive   = true
 
   validation {
     condition = (
-      length(nonsensitive(var.subnet_ids)) >= 2 &&
-      length(distinct(nonsensitive(var.subnet_ids))) == length(nonsensitive(var.subnet_ids)) &&
-      alltrue([for subnet_id in nonsensitive(var.subnet_ids) : can(regex("^subnet-[0-9a-fA-F]+$", subnet_id))])
+      var.override_public_subnet_ids == null ||
+      (
+        length(nonsensitive(var.override_public_subnet_ids)) >= 2 &&
+        length(distinct(nonsensitive(var.override_public_subnet_ids))) == length(nonsensitive(var.override_public_subnet_ids)) &&
+        alltrue([for subnet_id in nonsensitive(var.override_public_subnet_ids) : can(regex("^subnet-[0-9a-fA-F]+$", subnet_id))])
+      )
     )
-    error_message = "subnet_ids deve conter pelo menos duas subnets validas e sem duplicidade."
+    error_message = "override_public_subnet_ids deve ser null ou conter pelo menos duas subnets validas e sem duplicidade."
+  }
+}
+
+variable "override_private_subnet_ids" {
+  description = "Override opcional das subnets privadas usadas para NLB interno e VPC Link."
+  type        = list(string)
+  default     = null
+  nullable    = true
+  sensitive   = true
+
+  validation {
+    condition = (
+      var.override_private_subnet_ids == null ||
+      (
+        length(nonsensitive(var.override_private_subnet_ids)) >= 2 &&
+        length(distinct(nonsensitive(var.override_private_subnet_ids))) == length(nonsensitive(var.override_private_subnet_ids)) &&
+        alltrue([for subnet_id in nonsensitive(var.override_private_subnet_ids) : can(regex("^subnet-[0-9a-fA-F]+$", subnet_id))])
+      )
+    )
+    error_message = "override_private_subnet_ids deve ser null ou conter pelo menos duas subnets validas e sem duplicidade."
+  }
+}
+
+variable "override_vpc_cidr_block" {
+  description = "Override opcional do CIDR da VPC para regras internas de seguranca."
+  type        = string
+  default     = null
+  nullable    = true
+  sensitive   = true
+
+  validation {
+    condition     = var.override_vpc_cidr_block == null || can(cidrhost(nonsensitive(var.override_vpc_cidr_block), 0))
+    error_message = "override_vpc_cidr_block deve ser null ou um CIDR valido."
   }
 }
 
@@ -117,6 +176,18 @@ variable "eks_node_role_arn" {
     condition     = can(regex("^arn:aws[a-zA-Z-]*:iam::[0-9]{12}:role/.+$", nonsensitive(var.eks_node_role_arn)))
     error_message = "eks_node_role_arn deve ser um ARN valido de IAM Role."
   }
+}
+
+variable "aws_load_balancer_controller_policy_name" {
+  description = "Nome da IAM Policy do AWS Load Balancer Controller."
+  type        = string
+  default     = "oficina-aws-load-balancer-controller"
+}
+
+variable "aws_load_balancer_controller_role_name" {
+  description = "Nome da IAM Role IRSA do AWS Load Balancer Controller."
+  type        = string
+  default     = "oficina-aws-load-balancer-controller"
 }
 
 variable "ecr_repository_name" {
