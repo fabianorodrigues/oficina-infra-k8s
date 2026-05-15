@@ -105,13 +105,13 @@ O API Gateway exige que o parâmetro `/oficina/{environment}/api/backend-listene
 
 ## Como Validar na AWS
 
+### Depois de core e addons
+
 Console:
 
 - Em EKS, confirme cluster e node group ativos.
 - Em ECR, confirme o repositório da API.
 - No cluster, confirme o AWS Load Balancer Controller em `kube-system`.
-- Em API Gateway, confirme HTTP API, VPC Link e rotas principais.
-- Em SSM Parameter Store, confirme que os parâmetros esperados existam.
 
 CLI:
 
@@ -128,7 +128,20 @@ aws ecr describe-repositories --repository-names $env:ECR_REPOSITORY_NAME --regi
 
 aws eks update-kubeconfig --name $env:EKS_CLUSTER_NAME --region $env:AWS_REGION
 kubectl rollout status deployment/aws-load-balancer-controller -n kube-system
+```
 
+Nesse ponto, ainda é esperado que API Gateway, VPC Link e `/oficina/{environment}/api/public-base-url` não existam. Eles são criados apenas depois do deploy da API, da publicação das Lambdas e da execução do root `terraform/api-gateway`.
+
+### Depois do API Gateway
+
+Console:
+
+- Em API Gateway, confirme HTTP API, VPC Link e rotas principais.
+- Em SSM Parameter Store, confirme que `/oficina/{environment}/api/public-base-url` existe.
+
+CLI:
+
+```powershell
 aws apigatewayv2 get-apis --region $env:AWS_REGION --query "Items[?contains(Name, 'oficina')].{Name:Name,Protocol:ProtocolType}"
 aws apigatewayv2 get-vpc-links --region $env:AWS_REGION --query "Items[].{Name:Name,VpcLinkStatus:VpcLinkStatus}"
 aws ssm get-parameter --name "/oficina/$($env:ENVIRONMENT)/api/public-base-url" --region $env:AWS_REGION --query "Parameter.Name"
