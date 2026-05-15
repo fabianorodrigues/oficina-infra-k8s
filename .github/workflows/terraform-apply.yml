@@ -23,6 +23,7 @@ env:
   TF_VAR_ecr_mutable_alias_tag: ${{ vars.IMAGE_ALIAS_TAG || 'latest' }}
   TF_VAR_eks_cluster_role_arn: ${{ secrets['TF_VAR_eks_cluster_role_arn'] || vars.TF_VAR_eks_cluster_role_arn }}
   TF_VAR_eks_node_role_arn: ${{ secrets['TF_VAR_eks_node_role_arn'] || vars.TF_VAR_eks_node_role_arn }}
+  TF_VAR_aws_load_balancer_controller_iam_mode: ${{ vars.TF_VAR_aws_load_balancer_controller_iam_mode || 'node' }}
 
 jobs:
   apply-core:
@@ -72,6 +73,11 @@ jobs:
             exit 1
           fi
 
+          if [ "${TF_VAR_aws_load_balancer_controller_iam_mode}" != "node" ] && [ "${TF_VAR_aws_load_balancer_controller_iam_mode}" != "irsa" ]; then
+            echo "TF_VAR_aws_load_balancer_controller_iam_mode must be node or irsa."
+            exit 1
+          fi
+
           if [[ ! "${TF_VAR_eks_cluster_role_arn}" =~ ^arn:aws[a-zA-Z-]*:iam::[0-9]{12}:role/.+$ ]]; then
             echo "TF_VAR_eks_cluster_role_arn must be a valid IAM Role ARN."
             exit 1
@@ -90,6 +96,7 @@ jobs:
             printf 'TF_VAR_environment=%s\n' "${ENVIRONMENT}"
             printf 'TF_VAR_cluster_name=%s\n' "${EKS_CLUSTER_NAME}"
             printf 'TF_VAR_ecr_repository_name=%s\n' "${ECR_REPOSITORY_NAME}"
+            printf 'TF_VAR_aws_load_balancer_controller_iam_mode=%s\n' "${TF_VAR_aws_load_balancer_controller_iam_mode}"
           } >> "${GITHUB_ENV}"
 
       - name: Configure AWS credentials
@@ -218,9 +225,9 @@ jobs:
             --name "${EKS_CLUSTER_NAME}" \
             --region "${AWS_REGION}"
 
-          aws eks update-kubeconfig --name "${EKS_CLUSTER_NAME}" --region "${AWS_REGION}" >/dev/null
+          aws eks update-kubeconfig --name "${EKS_CLUSTER_NAME}" --region "${AWS_REGION}" >/dev/null 2>&1
 
-          if ! kubectl auth can-i get deployments -n kube-system >/dev/null; then
+          if ! kubectl auth can-i get deployments -n kube-system >/dev/null 2>&1; then
             echo "Falha ao validar AWS Load Balancer Controller."
             exit 1
           fi
@@ -236,6 +243,7 @@ jobs:
             printf 'TF_VAR_remote_state_bucket=%s\n' "${TF_STATE_BUCKET}"
             printf 'TF_VAR_project_name=%s\n' "${PROJECT_NAME}"
             printf 'TF_VAR_environment=%s\n' "${ENVIRONMENT}"
+            printf 'TF_VAR_aws_load_balancer_controller_iam_mode=%s\n' "${TF_VAR_aws_load_balancer_controller_iam_mode}"
           } >> "${GITHUB_ENV}"
 
       - name: Terraform init addons
@@ -270,12 +278,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          if ! kubectl get deployment aws-load-balancer-controller -n kube-system >/dev/null; then
+          if ! kubectl get deployment aws-load-balancer-controller -n kube-system >/dev/null 2>&1; then
             echo "Falha ao validar AWS Load Balancer Controller."
             exit 1
           fi
 
-          if ! kubectl rollout status deployment/aws-load-balancer-controller -n kube-system --timeout=180s >/dev/null; then
+          if ! kubectl rollout status deployment/aws-load-balancer-controller -n kube-system --timeout=180s >/dev/null 2>&1; then
             echo "Falha ao validar AWS Load Balancer Controller."
             exit 1
           fi

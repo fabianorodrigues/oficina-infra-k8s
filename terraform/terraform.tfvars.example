@@ -16,3 +16,5 @@ node_desired_size    = 1
 node_max_size        = 2
 eks_cluster_role_arn = "arn:aws:iam::<account-id>:role/<eks-cluster-role>"
 eks_node_role_arn    = "arn:aws:iam::<account-id>:role/<eks-node-role>"
+
+aws_load_balancer_controller_iam_mode = "node"

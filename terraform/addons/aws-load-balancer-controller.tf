@@ -35,8 +35,22 @@ resource "helm_release" "aws_load_balancer_controller" {
     value = "aws-load-balancer-controller"
   }
 
-  set_sensitive {
-    name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
-    value = local.aws_load_balancer_controller_role_arn
+  dynamic "set_sensitive" {
+    for_each = local.aws_load_balancer_controller_irsa_enabled ? [1] : []
+
+    content {
+      name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
+      value = coalesce(local.aws_load_balancer_controller_role_arn, "")
+    }
+  }
+
+  lifecycle {
+    precondition {
+      condition = (
+        !local.aws_load_balancer_controller_irsa_enabled ||
+        try(local.aws_load_balancer_controller_role_arn != null && length(trimspace(nonsensitive(local.aws_load_balancer_controller_role_arn))) > 0, false)
+      )
+      error_message = "aws_load_balancer_controller_role_arn e obrigatorio no remote state do core quando aws_load_balancer_controller_iam_mode = irsa."
+    }
   }
 }

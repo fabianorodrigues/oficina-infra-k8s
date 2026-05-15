@@ -178,6 +178,17 @@ variable "eks_node_role_arn" {
   }
 }
 
+variable "aws_load_balancer_controller_iam_mode" {
+  description = "Modo de IAM do AWS Load Balancer Controller. Use node para permissoes existentes no ambiente/node role ou irsa para criar IAM/OIDC dedicado."
+  type        = string
+  default     = "node"
+
+  validation {
+    condition     = contains(["node", "irsa"], var.aws_load_balancer_controller_iam_mode)
+    error_message = "aws_load_balancer_controller_iam_mode deve ser node ou irsa."
+  }
+}
+
 variable "aws_load_balancer_controller_policy_name" {
   description = "Nome da IAM Policy do AWS Load Balancer Controller."
   type        = string

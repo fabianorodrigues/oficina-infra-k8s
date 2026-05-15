@@ -23,8 +23,13 @@ output "node_group_name" {
 
 output "aws_load_balancer_controller_role_arn" {
   description = "ARN da IAM Role IRSA usada pelo AWS Load Balancer Controller."
-  value       = aws_iam_role.aws_load_balancer_controller.arn
+  value       = local.aws_load_balancer_controller_irsa_enabled ? aws_iam_role.aws_load_balancer_controller[0].arn : null
   sensitive   = true
+}
+
+output "aws_load_balancer_controller_iam_mode" {
+  description = "Modo de IAM configurado para o AWS Load Balancer Controller."
+  value       = var.aws_load_balancer_controller_iam_mode
 }
 
 output "vpc_id" {

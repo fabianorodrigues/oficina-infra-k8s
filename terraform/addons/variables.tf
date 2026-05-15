@@ -35,6 +35,17 @@ variable "core_remote_state_key" {
   default     = ""
 }
 
+variable "aws_load_balancer_controller_iam_mode" {
+  description = "Modo de IAM do AWS Load Balancer Controller. Use node para permissoes existentes no ambiente/node role ou irsa para usar role dedicada."
+  type        = string
+  default     = "node"
+
+  validation {
+    condition     = contains(["node", "irsa"], var.aws_load_balancer_controller_iam_mode)
+    error_message = "aws_load_balancer_controller_iam_mode deve ser node ou irsa."
+  }
+}
+
 variable "aws_load_balancer_controller_chart_version" {
   description = "Versao fixa do Helm chart do AWS Load Balancer Controller."
   type        = string

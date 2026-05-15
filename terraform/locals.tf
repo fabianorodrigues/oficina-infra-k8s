@@ -13,6 +13,8 @@ locals {
 
   eks_node_group_name = "${var.project_name}-node-group"
 
+  aws_load_balancer_controller_irsa_enabled = var.aws_load_balancer_controller_iam_mode == "irsa"
+
   common_tags = {
     Project     = var.project_name
     Environment = var.environment
