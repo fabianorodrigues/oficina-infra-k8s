@@ -201,6 +201,34 @@ variable "aws_load_balancer_controller_role_name" {
   default     = "oficina-aws-load-balancer-controller"
 }
 
+variable "load_balancer_provisioning_mode" {
+  description = "Modo de provisionamento do NLB. terraform_nlb: Terraform cria NLB/TG/Listener. aws_lbc: AWS Load Balancer Controller."
+  type        = string
+  default     = "terraform_nlb"
+
+  validation {
+    condition     = contains(["terraform_nlb", "aws_lbc"], var.load_balancer_provisioning_mode)
+    error_message = "load_balancer_provisioning_mode deve ser terraform_nlb ou aws_lbc."
+  }
+}
+
+variable "api_node_port" {
+  description = "NodePort da API no EKS. Usado no modo terraform_nlb."
+  type        = number
+  default     = 30080
+
+  validation {
+    condition     = var.api_node_port >= 30000 && var.api_node_port <= 32767
+    error_message = "api_node_port deve estar entre 30000 e 32767."
+  }
+}
+
+variable "api_health_check_path" {
+  description = "Caminho do health check do Target Group. Usado no modo terraform_nlb."
+  type        = string
+  default     = "/health"
+}
+
 variable "ecr_repository_name" {
   description = "Nome do repositorio ECR da imagem Docker da Oficina API."
   type        = string
