@@ -1,125 +1,113 @@
 # oficina-infra-k8s
 
-## Visão geral
+## Visão Geral
 
-Este repositório provisiona a infraestrutura Kubernetes da solução Oficina API. Ele consome a rede criada pelo `oficina-infra-db` e entrega o Amazon ECR e o cluster Amazon EKS usados pelo deploy da API.
+Este repositório provisiona os recursos de Kubernetes e exposição pública da solução Oficina. Ele mantém três roots Terraform:
 
-A solução completa é composta por quatro repositórios, nesta ordem de implantação:
+- `terraform`: ECR, EKS, node group, OIDC provider e IAM para o AWS Load Balancer Controller.
+- `terraform/addons`: instalação do AWS Load Balancer Controller via Helm e IRSA.
+- `terraform/api-gateway`: HTTP API com VPC Link para a API privada no EKS.
 
-1. `oficina-infra-db`: rede, security groups e RDS.
-2. `oficina-infra-k8s`: ECR, EKS e node group.
-3. `oficina-api`: imagem Docker, migrations e deploy da API no EKS.
-4. `oficina-auth-lambda`: Lambdas de autenticação por CPF e autorização JWT.
+Os valores padrão são adequados para ambiente de validação e podem ser ajustados conforme a necessidade. NAT não é obrigatório no padrão atual e Secrets Manager será avaliado em etapa futura.
 
-## Papel deste repositório
+## Responsabilidade
 
-- Provisionar o repositório ECR `oficina-api`.
-- Provisionar o cluster EKS `oficina-eks`.
-- Provisionar o node group `oficina-node-group`.
-- Gerar os outputs usados pelo deploy da API.
-- Preparar a base para uma integração futura com API Gateway.
+- Criar o repositório ECR da API.
+- Criar o cluster EKS e o node group mínimo.
+- Usar `public_subnet_ids` para o node group mínimo.
+- Preparar IRSA para o AWS Load Balancer Controller.
+- Instalar o AWS Load Balancer Controller em etapa de addons.
+- Criar o API Gateway HTTP API com VPC Link usando `private_subnet_ids`.
 
-## Integração e dependências
+## Ordem De Implantação
 
-Este repositório depende dos outputs do `oficina-infra-db`. Os outputs do Terraform existem para facilitar o provisionamento, a integração entre repositórios e a avaliação acadêmica do projeto como portfólio. Como podem expor metadados operacionais, como ECR, cluster, endpoint e node group, eles são tratados como sensíveis quando necessário e não são impressos nos logs do pipeline.
+1. `oficina-infra-db`
+2. `oficina-infra-k8s` core
+3. `oficina-infra-k8s` addons
+4. `oficina-api`
+5. `oficina-auth-lambda`
+6. `oficina-infra-k8s` API Gateway
+7. Novo deploy da `oficina-api` com `EMAIL_BASE_URL_APROVA_RECUSA_ORCAMENTO`
 
-| Valor consumido | Origem | Formato esperado |
-|---|---|---|
-| `TF_VAR_vpc_id` | Output `vpc_id` do `oficina-infra-db` | String, exemplo `vpc-abc` |
-| `TF_VAR_subnet_ids` | Output `subnet_ids` do `oficina-infra-db` | Lista JSON, exemplo `["subnet-abc","subnet-def"]` |
+## Configuração Necessária
 
-| Output gerado | Consumidor | Uso |
-|---|---|---|
-| `ecr_repository_url` | `oficina-api` | Configurar `ECR_REPOSITORY_URL` |
-| `cluster_name` | `oficina-api` | Configurar `EKS_CLUSTER_NAME` |
-| `node_group_name` | Validação operacional | Conferir o node group gerenciado |
-
-`ecr_repository_url` deve ter o formato `<account-id>.dkr.ecr.<region>.amazonaws.com/oficina-api`. O valor não é senha, mas expõe conta AWS, região e nome do repositório; por isso pode ser mantido como GitHub Secret no `oficina-api`.
-
-## Configuração necessária
-
-Configure os valores em `GitHub > Settings > Secrets and variables > Actions`.
+Configure no GitHub Actions:
 
 | Nome | Tipo | Uso |
-|---|---|---|
-| `AWS_ACCESS_KEY_ID` | Secret | Autenticar na AWS |
-| `AWS_SECRET_ACCESS_KEY` | Secret | Autenticar na AWS |
-| `AWS_SESSION_TOKEN` | Secret opcional | Usar credenciais temporárias |
-| `AWS_REGION` | Secret | Região AWS usada pelo projeto |
-| `TF_STATE_BUCKET` | Secret | Bucket S3 do Terraform State remoto |
-| `TF_VAR_vpc_id` | Secret recomendado | VPC criada pelo `oficina-infra-db` |
-| `TF_VAR_subnet_ids` | Secret recomendado | Subnets criadas pelo `oficina-infra-db` |
-| `TF_VAR_eks_cluster_role_arn` | Secret recomendado | Role do control plane do EKS |
-| `TF_VAR_eks_node_role_arn` | Secret recomendado | Role do node group |
-| `IMAGE_ALIAS_TAG` | Variable opcional | Alias mutável permitido no ECR; padrão `latest` |
+| --- | --- | --- |
+| `AWS_ACCESS_KEY_ID` | Secret | Autenticação AWS |
+| `AWS_SECRET_ACCESS_KEY` | Secret | Autenticação AWS |
+| `AWS_SESSION_TOKEN` | Secret opcional | Credenciais temporárias |
+| `AWS_REGION` | Secret | Região AWS |
+| `TF_STATE_BUCKET` | Secret | Bucket S3 do Terraform state |
+| `TF_VAR_eks_cluster_role_arn` | Secret | Role do cluster EKS |
+| `TF_VAR_eks_node_role_arn` | Secret | Role do node group |
 
-Exemplos de ARNs:
+O core consome automaticamente a rede criada pelo `oficina-infra-db` via remote state. Não é necessário informar VPC ou subnets manualmente no fluxo padrão.
 
-```text
-arn:aws:iam::<account-id>:role/<eks-cluster-role>
-arn:aws:iam::<account-id>:role/<eks-node-role>
-```
+As credenciais AWS usadas nos workflows devem ter permissão para ECR, EKS, IAM/IRSA do controller, Helm/Kubernetes via cluster, API Gateway, VPC Link, Lambda permissions e SSM conforme o root executado.
+## Como Executar Na AWS
 
-## Como executar e validar na AWS
-
-Em Pull Requests, o workflow `Terraform Check` valida a formatação e a configuração Terraform.
-
-Após o merge na `main`, execute manualmente:
+Execute o workflow manual:
 
 ```text
 GitHub Actions > Terraform Apply > Run workflow
 ```
 
-O workflow prepara o backend remoto, executa `terraform plan`, aplica ECR/EKS e valida cluster, node group e repositório ECR sem imprimir dados de infraestrutura nos logs.
+O workflow aplica primeiro o root core e depois o root `terraform/addons`. A instalação do AWS Load Balancer Controller ocorre somente depois que o cluster está ativo e acessível.
 
-Para validar manualmente:
+Depois do deploy da API e das Lambdas, execute:
 
-```powershell
-aws eks update-kubeconfig --name <cluster_name> --region <region>
-kubectl get nodes
-aws ecr describe-repositories --repository-names oficina-api --region <region>
-terraform output -raw cluster_name
+```text
+GitHub Actions > Terraform API Gateway Apply > Run workflow
 ```
 
-Resultado esperado:
+## Como Validar Na AWS
 
-- cluster EKS com status `ACTIVE`;
-- node group com status `ACTIVE`;
-- repositório ECR `oficina-api` criado;
-- ECR com tags imutáveis e exceção operacional para `latest`.
+Valide pelo próprio workflow:
 
-## Problemas comuns
+- EKS e ECR criados no core.
+- Deployment `aws-load-balancer-controller` disponível no namespace `kube-system`.
+- API Gateway criado somente após o Listener ARN ter sido gravado pelo deploy da API.
 
-| Problema | Possível causa | Como resolver |
-|---|---|---|
-| `TF_VAR_vpc_id` inválido | Valor copiado incorretamente | Copie novamente o output `vpc_id` do `oficina-infra-db` |
-| `TF_VAR_subnet_ids` inválido | Lista fora do formato JSON | Use `["subnet-abc","subnet-def"]` |
-| EKS falha por role | ARN incorreto ou role sem permissões | Revise `TF_VAR_eks_cluster_role_arn` e `TF_VAR_eks_node_role_arn` |
-| Push da API falha no ECR | Secret ausente no `oficina-api` | Configure `ECR_REPOSITORY_URL` com `ecr_repository_url` |
 
-## Como executar e validar localmente
+## Como Validar Localmente
 
-Para validação local do Terraform:
+Execute validações não destrutivas:
 
 ```powershell
-cd oficina-infra-k8s/terraform
-terraform init -backend=false
-terraform fmt -check -recursive
-terraform validate
+terraform -chdir=terraform fmt -check -recursive
+terraform -chdir=terraform init -backend=false
+terraform -chdir=terraform validate
+
+terraform -chdir=terraform/addons fmt -check -recursive
+terraform -chdir=terraform/addons init -backend=false
+terraform -chdir=terraform/addons validate
+
+terraform -chdir=terraform/api-gateway fmt -check -recursive
+terraform -chdir=terraform/api-gateway init -backend=false
+terraform -chdir=terraform/api-gateway validate
 ```
 
-Para consultar outputs em ambiente autenticado, use comandos explícitos e evite colar os valores em logs públicos:
+## Valores Consumidos
 
-```powershell
-terraform output -raw ecr_repository_url
-terraform output -raw cluster_name
-```
+| Valor | Origem | Uso |
+| --- | --- | --- |
+| `vpc_id` | Remote state do `oficina-infra-db` | Cluster, controller e VPC Link |
+| `vpc_cidr_block` | Remote state do `oficina-infra-db` | Regras internas de segurança |
+| `public_subnet_ids` | Remote state do `oficina-infra-db` | Node group mínimo |
+| `private_subnet_ids` | Remote state do `oficina-infra-db` | NLB interno e VPC Link |
+| `/oficina/{environment}/api/backend-listener-arn` | SSM | Integração privada do API Gateway |
 
-Para um plano local opcional, copie o exemplo e preencha os valores reais:
+## Valores Gerados
 
-```powershell
-Copy-Item terraform.tfvars.example terraform.tfvars
-terraform plan
-```
+| Valor | Destino | Uso |
+| --- | --- | --- |
+| ECR repository | - | Publicação da imagem da API |
+| Cluster EKS | - | Deploy da API |
+| IAM Role do controller | Remote state do core | Instalação do addon |
+| `/oficina/{environment}/api/public-base-url` | SSM | URL pública usada pela API em novo deploy |
 
-Não versione `terraform.tfvars` real.
+## Próxima Etapa
+
+Após o core e os addons, faça o deploy da `oficina-api`, publique o `oficina-auth-lambda`, aplique o root `api-gateway` e execute novo deploy da API para consumir a URL pública do API Gateway.

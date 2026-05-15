@@ -5,8 +5,10 @@ ecr_repository_name   = "oficina-api"
 ecr_mutable_alias_tag = "latest"
 ecr_force_delete      = false
 
-vpc_id               = "vpc-0123456789abcdef0"
-subnet_ids           = ["subnet-0123456789abcdef0", "subnet-abcdef01234567890"]
+remote_state_bucket = "CHANGE_ME_STATE_BUCKET"
+remote_state_region = "us-east-1"
+db_remote_state_key = "oficina-infra-db/dev/terraform.tfstate"
+
 cluster_name         = "oficina-eks"
 node_instance_types  = ["t3.medium"]
 node_min_size        = 1

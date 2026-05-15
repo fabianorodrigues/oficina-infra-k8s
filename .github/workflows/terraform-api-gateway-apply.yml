@@ -1,0 +1,120 @@
+name: Terraform API Gateway Apply
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform-api-gateway-${{ github.ref_name }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    working-directory: terraform/api-gateway
+
+env:
+  AWS_ACCESS_KEY_ID: ${{ secrets['AWS_ACCESS_KEY_ID'] }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets['AWS_SECRET_ACCESS_KEY'] }}
+  AWS_SESSION_TOKEN: ${{ secrets['AWS_SESSION_TOKEN'] }}
+  AWS_REGION: ${{ secrets['AWS_REGION'] }}
+  TF_STATE_BUCKET: ${{ secrets['TF_STATE_BUCKET'] }}
+  ENVIRONMENT: ${{ vars.ENVIRONMENT || 'dev' }}
+  PROJECT_NAME: ${{ vars.PROJECT_NAME || 'oficina' }}
+  TF_VAR_auth_function_name: ${{ vars.AUTH_FUNCTION_NAME || 'oficina-auth-cpf' }}
+  TF_VAR_authorizer_function_name: ${{ vars.AUTHORIZER_FUNCTION_NAME || 'oficina-jwt-authorizer' }}
+
+jobs:
+  apply:
+    name: Apply API Gateway
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+
+      - name: Validate required configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          required_vars=(
+            AWS_ACCESS_KEY_ID
+            AWS_SECRET_ACCESS_KEY
+            AWS_REGION
+            TF_STATE_BUCKET
+          )
+
+          missing=0
+          for var_name in "${required_vars[@]}"; do
+            if [ -z "${!var_name:-}" ]; then
+              echo "${var_name} is required."
+              missing=1
+            fi
+          done
+
+          if [ "${missing}" -ne 0 ]; then
+            exit 1
+          fi
+
+          {
+            printf 'TF_VAR_aws_region=%s\n' "${AWS_REGION}"
+            printf 'TF_VAR_remote_state_region=%s\n' "${AWS_REGION}"
+            printf 'TF_VAR_remote_state_bucket=%s\n' "${TF_STATE_BUCKET}"
+            printf 'TF_VAR_project_name=%s\n' "${PROJECT_NAME}"
+            printf 'TF_VAR_environment=%s\n' "${ENVIRONMENT}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ env.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Validate backend listener parameter
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          parameter_name="/oficina/${ENVIRONMENT}/api/backend-listener-arn"
+
+          if ! aws ssm get-parameter \
+              --name "${parameter_name}" \
+              --region "${AWS_REGION}" >/dev/null 2>&1; then
+            echo "Falha ao validar parâmetro SSM obrigatório. Execute o deploy da API antes do API Gateway."
+            exit 1
+          fi
+
+      - name: Terraform init
+        run: terraform init -backend-config="bucket=${TF_STATE_BUCKET}" -backend-config="region=${AWS_REGION}" -backend-config="key=oficina-infra-k8s/${ENVIRONMENT}/api-gateway/terraform.tfstate" -backend-config="use_lockfile=true"
+
+      - name: Terraform plan
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! terraform plan -out=tfplan >/tmp/terraform-api-gateway-plan.log 2>&1; then
+            echo "Terraform API Gateway plan failed."
+            exit 1
+          fi
+
+          echo "Terraform API Gateway plan completed."
+
+      - name: Terraform apply
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! terraform apply -auto-approve tfplan >/tmp/terraform-api-gateway-apply.log 2>&1; then
+            echo "Terraform API Gateway apply failed."
+            exit 1
+          fi
+
+          echo "Terraform API Gateway apply completed."

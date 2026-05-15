@@ -1,4 +1,4 @@
-name: Terraform Check
+name: Terraform Addons Check
 
 on:
   pull_request:
@@ -9,16 +9,16 @@ permissions:
   contents: read
 
 concurrency:
-  group: terraform-k8s-core-check-${{ github.ref_name }}
+  group: terraform-k8s-addons-check-${{ github.ref_name }}
   cancel-in-progress: true
 
 defaults:
   run:
-    working-directory: terraform
+    working-directory: terraform/addons
 
 jobs:
   check:
-    name: Check
+    name: Check addons
     runs-on: ubuntu-latest
 
     steps:

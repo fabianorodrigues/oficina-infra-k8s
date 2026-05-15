@@ -1,0 +1,14 @@
+locals {
+  core_remote_state_key = length(trimspace(var.core_remote_state_key)) > 0 ? var.core_remote_state_key : "oficina-infra-k8s/${var.environment}/core/terraform.tfstate"
+
+  cluster_name                          = data.terraform_remote_state.core.outputs.cluster_name
+  vpc_id                                = data.terraform_remote_state.core.outputs.vpc_id
+  aws_load_balancer_controller_role_arn = data.terraform_remote_state.core.outputs.aws_load_balancer_controller_role_arn
+
+  common_tags = {
+    Project     = var.project_name
+    Environment = var.environment
+    ManagedBy   = "terraform"
+    Repository  = "oficina-infra-k8s"
+  }
+}
