@@ -20,6 +20,8 @@ env:
   PROJECT_NAME: ${{ vars.PROJECT_NAME || 'oficina' }}
   EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME || 'oficina-eks' }}
   ECR_REPOSITORY_NAME: ${{ vars.ECR_REPOSITORY_NAME || 'oficina-api' }}
+  LOAD_BALANCER_PROVISIONING_MODE: ${{ vars.LOAD_BALANCER_PROVISIONING_MODE || 'terraform_nlb' }}
+  API_NODE_PORT: ${{ vars.API_NODE_PORT || '30080' }}
   TF_VAR_ecr_mutable_alias_tag: ${{ vars.IMAGE_ALIAS_TAG || 'latest' }}
   TF_VAR_eks_cluster_role_arn: ${{ secrets['TF_VAR_eks_cluster_role_arn'] || vars.TF_VAR_eks_cluster_role_arn }}
   TF_VAR_eks_node_role_arn: ${{ secrets['TF_VAR_eks_node_role_arn'] || vars.TF_VAR_eks_node_role_arn }}
@@ -78,6 +80,16 @@ jobs:
             exit 1
           fi
 
+          if [ "${LOAD_BALANCER_PROVISIONING_MODE}" != "terraform_nlb" ] && [ "${LOAD_BALANCER_PROVISIONING_MODE}" != "aws_lbc" ]; then
+            echo "LOAD_BALANCER_PROVISIONING_MODE must be terraform_nlb or aws_lbc."
+            exit 1
+          fi
+
+          if [[ ! "${API_NODE_PORT}" =~ ^[0-9]+$ ]] || [ "${API_NODE_PORT}" -lt 30000 ] || [ "${API_NODE_PORT}" -gt 32767 ]; then
+            echo "API_NODE_PORT must be an integer between 30000 and 32767."
+            exit 1
+          fi
+
           if [[ ! "${TF_VAR_eks_cluster_role_arn}" =~ ^arn:aws[a-zA-Z-]*:iam::[0-9]{12}:role/.+$ ]]; then
             echo "TF_VAR_eks_cluster_role_arn must be a valid IAM Role ARN."
             exit 1
@@ -97,6 +109,8 @@ jobs:
             printf 'TF_VAR_cluster_name=%s\n' "${EKS_CLUSTER_NAME}"
             printf 'TF_VAR_ecr_repository_name=%s\n' "${ECR_REPOSITORY_NAME}"
             printf 'TF_VAR_aws_load_balancer_controller_iam_mode=%s\n' "${TF_VAR_aws_load_balancer_controller_iam_mode}"
+            printf 'TF_VAR_load_balancer_provisioning_mode=%s\n' "${LOAD_BALANCER_PROVISIONING_MODE}"
+            printf 'TF_VAR_api_node_port=%s\n' "${API_NODE_PORT}"
           } >> "${GITHUB_ENV}"
 
       - name: Configure AWS credentials
@@ -193,6 +207,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: apply-core
+    if: ${{ vars.LOAD_BALANCER_PROVISIONING_MODE == 'aws_lbc' }}
 
     defaults:
       run:

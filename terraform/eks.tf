@@ -131,4 +131,11 @@ resource "aws_vpc_security_group_ingress_rule" "nodes_from_vpc_nodeport" {
   tags = {
     Name = "${var.project_name}-nodes-from-vpc-nodeport"
   }
+
+  lifecycle {
+    precondition {
+      condition     = nonsensitive(local.vpc_cidr_block) != "0.0.0.0/0"
+      error_message = "A regra NodePort deve permitir apenas trafego interno da VPC, nunca 0.0.0.0/0."
+    }
+  }
 }

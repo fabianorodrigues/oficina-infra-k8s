@@ -83,12 +83,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          parameter_name="/oficina/${ENVIRONMENT}/api/backend-listener-arn"
+          parameter_name="/${PROJECT_NAME}/${ENVIRONMENT}/api/backend-listener-arn"
 
           if ! aws ssm get-parameter \
               --name "${parameter_name}" \
               --region "${AWS_REGION}" >/dev/null 2>&1; then
-            echo "Falha ao validar parâmetro SSM obrigatório. Execute o deploy da API antes do API Gateway."
+            echo "Falha ao validar parametro SSM obrigatorio. Execute o deploy da API antes do API Gateway."
             exit 1
           fi
 

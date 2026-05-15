@@ -29,7 +29,7 @@ variable "authorizer_function_name" {
 }
 
 variable "backend_listener_ssm_parameter_name" {
-  description = "Nome do parametro SSM que contem o Listener ARN do NLB interno. Quando vazio, usa /oficina/{environment}/api/backend-listener-arn."
+  description = "Nome do parametro SSM que contem o Listener ARN do NLB interno. Quando vazio, usa /{project_name}/{environment}/api/backend-listener-arn."
   type        = string
   default     = ""
 }

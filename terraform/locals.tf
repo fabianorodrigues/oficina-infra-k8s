@@ -13,7 +13,8 @@ locals {
 
   eks_node_group_name = "${var.project_name}-node-group"
 
-  aws_load_balancer_controller_irsa_enabled = var.aws_load_balancer_controller_iam_mode == "irsa"
+  aws_load_balancer_controller_irsa_enabled = var.load_balancer_provisioning_mode == "aws_lbc" && var.aws_load_balancer_controller_iam_mode == "irsa"
+  nlb_provisioning_enabled                  = var.load_balancer_provisioning_mode == "terraform_nlb"
 
   common_tags = {
     Project     = var.project_name

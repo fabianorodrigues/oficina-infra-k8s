@@ -32,6 +32,11 @@ output "aws_load_balancer_controller_iam_mode" {
   value       = var.aws_load_balancer_controller_iam_mode
 }
 
+output "load_balancer_provisioning_mode" {
+  description = "Modo de provisionamento do NLB configurado."
+  value       = var.load_balancer_provisioning_mode
+}
+
 output "vpc_id" {
   description = "ID da VPC consumida do oficina-infra-db."
   value       = local.vpc_id
