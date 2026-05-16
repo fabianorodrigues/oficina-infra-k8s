@@ -2,7 +2,7 @@
 
 ## Visão geral
 
-Repositório que provisiona a camada Kubernetes e a entrada pública da solução Oficina. Contém quatro roots Terraform independentes: cluster EKS e ECR, controlador opcional de Load Balancer, HTTP API com VPC Link e observabilidade New Relic.
+Repositório que provisiona a camada Kubernetes e a entrada pública da solução Oficina. Contém quatro roots Terraform independentes: cluster EKS e ECR, controlador opcional de Load Balancer, HTTP API com VPC Link e adaptador opcional de observabilidade New Relic.
 
 - Provisiona EKS, Node Group, ECR e o NLB interno (modo padrão).
 - Provisiona o API Gateway HTTP, VPC Link e rotas que integram a API e as Lambdas.
@@ -16,7 +16,7 @@ Repositório que provisiona a camada Kubernetes e a entrada pública da soluçã
 - AWS API Gateway HTTP API e VPC Link
 - AWS SSM Parameter Store
 - Helm (somente no modo `aws_lbc`)
-- New Relic (opcional)
+- New Relic (adaptador opcional)
 - GitHub Actions
 
 ## Solução integrada
@@ -77,7 +77,7 @@ graph TB
 | `terraform/` (core) | EKS, Node Group, ECR e NLB interno (modo `terraform_nlb`) | sempre |
 | `terraform/addons/` | AWS Load Balancer Controller via Helm | apenas no modo `aws_lbc` |
 | `terraform/api-gateway/` | HTTP API, VPC Link, rotas e integrações | sempre, após [oficina-api](https://github.com/fabianorodrigues/oficina-api) e [oficina-auth-lambda](https://github.com/fabianorodrigues/oficina-auth-lambda) |
-| `terraform/observability/` | New Relic (dashboards, alertas, Synthetic Monitor) | opcional |
+| `terraform/observability/` | Adaptador New Relic (dashboards, alertas, Synthetic Monitor) | opcional |
 
 Cada root tem `backend.tf` próprio e state isolado em `s3://<bucket-de-state>/oficina-infra-k8s/<ambiente>/{core|addons|api-gateway|observability}/terraform.tfstate`.
 
@@ -217,7 +217,7 @@ aws ssm get-parameter --name "/$($env:PROJECT_NAME)/$($env:ENVIRONMENT)/api/publ
 
 ## Observabilidade
 
-O root `terraform/observability` provisiona dashboards, alertas, workflow de notificação e Synthetic Monitor no New Relic. O padrão é seguro: `enable_new_relic=false` permite `validate` sem credenciais.
+O padrão da solução é independente de fornecedor: aplicações expõem sinais por OpenTelemetry/OTLP e logs JSON com campos canônicos como `service.name`, `correlationId` e `eventType`. O root `terraform/observability` é apenas um adaptador opcional para validar esses sinais no New Relic, provisionando dashboards, alertas, workflow de notificação e Synthetic Monitor. O padrão é seguro: `enable_new_relic=false` permite `validate` sem credenciais.
 
 ### Configurar
 
@@ -230,7 +230,13 @@ O root `terraform/observability` provisiona dashboards, alertas, workflow de not
 | `NEW_RELIC_REGION` | Variable | Não | `US` | `US` ou `EU` |
 | `API_GATEWAY_URL` | Secret ou Variable | Não | vazio (desabilita Synthetic) | URL pública usada pelo Synthetic Monitor |
 
-A variável Terraform `enable_new_relic` deve ser `true` para criar recursos no New Relic. Para que APM, traces e logs do [oficina-api](https://github.com/fabianorodrigues/oficina-api) cheguem ao New Relic, o pod precisa receber as variáveis `OTEL_EXPORTER_OTLP_*` — configurado pelo workflow `deploy-api` do [oficina-api](https://github.com/fabianorodrigues/oficina-api).
+A variável Terraform `enable_new_relic` deve ser `true` para criar recursos no New Relic. Para que APM e traces do [oficina-api](https://github.com/fabianorodrigues/oficina-api) cheguem ao New Relic, configure o workflow `deploy-api` com variáveis OTLP genéricas:
+
+```text
+OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp.nr-data.net
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+OTEL_EXPORTER_OTLP_HEADERS=api-key=<license-key>
+```
 
 ### Executar
 
@@ -244,8 +250,8 @@ Quando aplicado, o workflow instala o chart `nri-bundle` no namespace `newrelic`
 
 Console New Relic:
 
-- **APM**: confirme entidade `oficina-api` com transações em `/api/*` e `/health`.
-- **Logs**: filtre por `correlationId` e `eventType` (`OrdemServicoCriada`, `OrdemServicoStatusAlterado`, `OrdemServicoFalha`, `EmailOrcamentoFalha`).
+- **APM**: confirme entidade `oficina-api` com `service.name = 'oficina-api'` e transações em `/api/*` e `/health`.
+- **Logs**: filtre por `correlationId` e `eventType` (`OrdemServicoCriada`, `OrdemServicoStatusAlterado`, `OrdemServicoFalha`, `EmailOrcamentoFalha`) quando a coleta de logs do Kubernetes estiver habilitada.
 - **Kubernetes**: confirme cluster, nodes, pods e logs dos pods sob a integração `nri-bundle`.
 - **Dashboards**: latência da API, erros 5xx, uptime, CPU e memória Kubernetes, volume diário de OS, tempo médio por status, falhas de OS.
 - **Alertas**: force uma condição controlada ou reduza thresholds temporariamente e confirme a abertura da issue.
