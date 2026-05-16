@@ -215,28 +215,6 @@ aws apigatewayv2 get-apis --region $env:AWS_REGION --query "Items[?contains(Name
 aws ssm get-parameter --name "/$($env:PROJECT_NAME)/$($env:ENVIRONMENT)/api/public-base-url" --region $env:AWS_REGION --query "Parameter.Name"
 ```
 
-## Execução local
-
-Apenas validações não destrutivas em cada root:
-
-```powershell
-terraform -chdir=terraform fmt -check -recursive
-terraform -chdir=terraform init -backend=false
-terraform -chdir=terraform validate
-
-terraform -chdir=terraform/addons fmt -check -recursive
-terraform -chdir=terraform/addons init -backend=false
-terraform -chdir=terraform/addons validate
-
-terraform -chdir=terraform/api-gateway fmt -check -recursive
-terraform -chdir=terraform/api-gateway init -backend=false
-terraform -chdir=terraform/api-gateway validate
-
-terraform -chdir=terraform/observability fmt -check -recursive
-terraform -chdir=terraform/observability init -backend=false
-terraform -chdir=terraform/observability validate
-```
-
 ## Observabilidade
 
 O root `terraform/observability` provisiona dashboards, alertas, workflow de notificação e Synthetic Monitor no New Relic. O padrão é seguro: `enable_new_relic=false` permite `validate` sem credenciais.
