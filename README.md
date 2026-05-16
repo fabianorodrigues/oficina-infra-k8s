@@ -14,8 +14,8 @@ O modo padrão é `terraform_nlb`: o Terraform cria o NLB interno, Target Group,
 
 ```text
                     ┌──────────────────────────────────────┐
-                    │         API Gateway HTTP API          │
-                    │  única entrada pública da solução     │
+                    │         API Gateway HTTP API         │
+                    │  única entrada pública da solução    │
                     └────────────┬─────────────────────────┘
                                  │
           ┌──────────────────────┼──────────────────────┐
@@ -52,7 +52,7 @@ O modo padrão é `terraform_nlb`: o Terraform cria o NLB interno, Target Group,
 - Helm, somente no modo `aws_lbc`
 - GitHub Actions
 
-## Posição na sequência (modo padrão `terraform_nlb`)
+## Sequência de Deploy (modo padrão `terraform_nlb`)
 
 | Passo | Repositório | O que provisiona |
 |-------|-------------|-----------------|
@@ -129,7 +129,7 @@ Após o merge na `main`, execute manualmente:
 GitHub Actions > Terraform Apply > Run workflow
 ```
 
-No modo `terraform_nlb`, o job de addons é **pulado automaticamente**. O Target Group pode ficar sem targets saudáveis até o deploy da `oficina-api`; isso é esperado e não deve falhar o apply do core.
+No modo `terraform_nlb`, o job de addons é **ignorado automaticamente**. O Target Group pode ficar sem targets saudáveis até o deploy da `oficina-api`; isso é esperado e não deve falhar o apply do core.
 
 No modo `aws_lbc`, o mesmo workflow também aplica os addons (AWS Load Balancer Controller via Helm).
 
