@@ -1,0 +1,278 @@
+name: Terraform Observability
+
+on:
+  pull_request:
+    branches: [ "main" ]
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Executar apply manual da observabilidade"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform-observability-${{ github.ref_name }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    working-directory: terraform/observability
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  AWS_ACCESS_KEY_ID: ${{ secrets['AWS_ACCESS_KEY_ID'] }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets['AWS_SECRET_ACCESS_KEY'] }}
+  AWS_SESSION_TOKEN: ${{ secrets['AWS_SESSION_TOKEN'] }}
+  AWS_REGION: ${{ secrets['AWS_REGION'] }}
+  TF_STATE_BUCKET: ${{ secrets['TF_STATE_BUCKET'] }}
+  ENVIRONMENT: ${{ vars.ENVIRONMENT || 'dev' }}
+  PROJECT_NAME: ${{ vars.PROJECT_NAME || 'oficina' }}
+  NEW_RELIC_LICENSE_KEY: ${{ secrets['NEW_RELIC_LICENSE_KEY'] }}
+  NEW_RELIC_USER_API_KEY: ${{ secrets['NEW_RELIC_USER_API_KEY'] }}
+  NEW_RELIC_ACCOUNT_ID: ${{ secrets['NEW_RELIC_ACCOUNT_ID'] }}
+  NEW_RELIC_REGION: ${{ vars.NEW_RELIC_REGION || 'US' }}
+  NEW_RELIC_NOTIFICATION_EMAIL: ${{ secrets['NEW_RELIC_NOTIFICATION_EMAIL'] }}
+  API_GATEWAY_URL: ${{ secrets['API_GATEWAY_URL'] || vars.API_GATEWAY_URL }}
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+
+      - name: Mask sensitive values
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for value in \
+            "${NEW_RELIC_LICENSE_KEY:-}" \
+            "${NEW_RELIC_USER_API_KEY:-}" \
+            "${NEW_RELIC_ACCOUNT_ID:-}" \
+            "${NEW_RELIC_NOTIFICATION_EMAIL:-}" \
+            "${API_GATEWAY_URL:-}"; do
+            if [ -n "${value}" ]; then
+              echo "::add-mask::${value}"
+            fi
+          done
+
+      - name: Terraform format check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init without backend
+        run: terraform init -backend=false
+
+      - name: Terraform validate
+        run: terraform validate
+
+  plan:
+    name: Manual plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: validate
+    if: github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ env.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Prepare variables
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          required_vars=(
+            AWS_ACCESS_KEY_ID
+            AWS_SECRET_ACCESS_KEY
+            AWS_REGION
+            TF_STATE_BUCKET
+            NEW_RELIC_LICENSE_KEY
+            NEW_RELIC_USER_API_KEY
+            NEW_RELIC_ACCOUNT_ID
+            NEW_RELIC_NOTIFICATION_EMAIL
+          )
+
+          missing=0
+          for var_name in "${required_vars[@]}"; do
+            if [ -z "${!var_name:-}" ]; then
+              echo "${var_name} is required for observability plan/apply."
+              missing=1
+            fi
+          done
+
+          if [ "${missing}" -ne 0 ]; then
+            exit 1
+          fi
+
+          for value in \
+            "${NEW_RELIC_LICENSE_KEY}" \
+            "${NEW_RELIC_USER_API_KEY}" \
+            "${NEW_RELIC_ACCOUNT_ID}" \
+            "${NEW_RELIC_NOTIFICATION_EMAIL}" \
+            "${API_GATEWAY_URL:-}"; do
+            if [ -n "${value}" ]; then
+              echo "::add-mask::${value}"
+            fi
+          done
+
+          {
+            printf 'TF_VAR_enable_new_relic=true\n'
+            printf 'TF_VAR_aws_region=%s\n' "${AWS_REGION}"
+            printf 'TF_VAR_remote_state_region=%s\n' "${AWS_REGION}"
+            printf 'TF_VAR_remote_state_bucket=%s\n' "${TF_STATE_BUCKET}"
+            printf 'TF_VAR_project_name=%s\n' "${PROJECT_NAME}"
+            printf 'TF_VAR_environment=%s\n' "${ENVIRONMENT}"
+            printf 'TF_VAR_new_relic_region=%s\n' "${NEW_RELIC_REGION}"
+            printf 'TF_VAR_new_relic_license_key=%s\n' "${NEW_RELIC_LICENSE_KEY}"
+            printf 'TF_VAR_new_relic_user_api_key=%s\n' "${NEW_RELIC_USER_API_KEY}"
+            printf 'TF_VAR_new_relic_account_id=%s\n' "${NEW_RELIC_ACCOUNT_ID}"
+            printf 'TF_VAR_new_relic_notification_email=%s\n' "${NEW_RELIC_NOTIFICATION_EMAIL}"
+            printf 'TF_VAR_api_gateway_url=%s\n' "${API_GATEWAY_URL:-}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Terraform init
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          {
+            printf 'bucket = "%s"\n' "${TF_STATE_BUCKET}"
+            printf 'region = "%s"\n' "${AWS_REGION}"
+            printf 'key = "%s"\n' "oficina-infra-k8s/${ENVIRONMENT}/observability/terraform.tfstate"
+            printf 'use_lockfile = true\n'
+          } > backend.hcl
+
+          terraform init -backend-config=backend.hcl
+
+      - name: Terraform plan
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! terraform plan -out=tfplan >/tmp/terraform-observability-plan.log 2>&1; then
+            echo "Terraform observability plan failed."
+            exit 1
+          fi
+
+          echo "Terraform observability plan completed."
+
+      - name: Upload plan
+        if: inputs.apply == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-observability-plan
+          path: terraform/observability/tfplan
+          if-no-files-found: error
+          retention-days: 1
+
+  apply:
+    name: Manual apply
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: plan
+    if: github.event_name == 'workflow_dispatch' && inputs.apply == 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+
+      - name: Download plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-observability-plan
+          path: terraform/observability
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ env.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Prepare variables
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for value in \
+            "${NEW_RELIC_LICENSE_KEY}" \
+            "${NEW_RELIC_USER_API_KEY}" \
+            "${NEW_RELIC_ACCOUNT_ID}" \
+            "${NEW_RELIC_NOTIFICATION_EMAIL}" \
+            "${API_GATEWAY_URL:-}"; do
+            if [ -n "${value}" ]; then
+              echo "::add-mask::${value}"
+            fi
+          done
+
+          {
+            printf 'TF_VAR_enable_new_relic=true\n'
+            printf 'TF_VAR_aws_region=%s\n' "${AWS_REGION}"
+            printf 'TF_VAR_remote_state_region=%s\n' "${AWS_REGION}"
+            printf 'TF_VAR_remote_state_bucket=%s\n' "${TF_STATE_BUCKET}"
+            printf 'TF_VAR_project_name=%s\n' "${PROJECT_NAME}"
+            printf 'TF_VAR_environment=%s\n' "${ENVIRONMENT}"
+            printf 'TF_VAR_new_relic_region=%s\n' "${NEW_RELIC_REGION}"
+            printf 'TF_VAR_new_relic_license_key=%s\n' "${NEW_RELIC_LICENSE_KEY}"
+            printf 'TF_VAR_new_relic_user_api_key=%s\n' "${NEW_RELIC_USER_API_KEY}"
+            printf 'TF_VAR_new_relic_account_id=%s\n' "${NEW_RELIC_ACCOUNT_ID}"
+            printf 'TF_VAR_new_relic_notification_email=%s\n' "${NEW_RELIC_NOTIFICATION_EMAIL}"
+            printf 'TF_VAR_api_gateway_url=%s\n' "${API_GATEWAY_URL:-}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Terraform init
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          {
+            printf 'bucket = "%s"\n' "${TF_STATE_BUCKET}"
+            printf 'region = "%s"\n' "${AWS_REGION}"
+            printf 'key = "%s"\n' "oficina-infra-k8s/${ENVIRONMENT}/observability/terraform.tfstate"
+            printf 'use_lockfile = true\n'
+          } > backend.hcl
+
+          terraform init -backend-config=backend.hcl
+
+      - name: Terraform apply
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! terraform apply -auto-approve tfplan >/tmp/terraform-observability-apply.log 2>&1; then
+            echo "Terraform observability apply failed."
+            exit 1
+          fi
+
+          echo "Terraform observability apply completed."

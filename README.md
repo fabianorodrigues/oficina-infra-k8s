@@ -2,126 +2,159 @@
 
 ## Visão geral
 
-Este repositório provisiona a camada Kubernetes e a entrada pública da solução Oficina. Ele contém três roots Terraform:
+Repositório que provisiona a camada Kubernetes e a entrada pública da solução Oficina. Contém quatro roots Terraform independentes: cluster EKS e ECR, controlador opcional de Load Balancer, HTTP API com VPC Link e adaptador opcional de observabilidade New Relic.
 
-- `terraform`: EKS, ECR e, no modo padrão, NLB interno da API.
-- `terraform/addons`: instalação opcional do AWS Load Balancer Controller.
-- `terraform/api-gateway`: HTTP API, VPC Link, rotas e integrações com backend e Lambdas.
-
-O modo padrão é `terraform_nlb`: o Terraform cria o NLB interno, Target Group, Listener e parâmetro SSM do Listener ARN. O modo `aws_lbc` é uma opção avançada quando a conta tem permissões para usar o AWS Load Balancer Controller.
-
-## Diagrama de arquitetura
-
-```text
-                    ┌──────────────────────────────────────┐
-                    │         API Gateway HTTP API         │
-                    │  única entrada pública da solução    │
-                    └────────────┬─────────────────────────┘
-                                 │
-          ┌──────────────────────┼──────────────────────┐
-          │                      │                      │
-  POST /api/auth/cpf    GET /health              ANY /api/{proxy+}
-          │              sem auth                JWT Authorizer
-          ▼                      │                      │
-  Lambda Auth CPF                │              Lambda Authorizer
-  VPC + RDS                      │              sem VPC
-  gera JWT                       │                      │
-                                 └──────────┬───────────┘
-                                            │
-                                      VPC Link privado
-                                            │
-                                   NLB interno privado
-                                   subnets privadas
-                                            │
-                               EKS Node Group público
-                               NodePort :30080
-                                            │
-                                   oficina-api Pods
-                                            │
-                                   RDS SQL Server
-                                   subnets privadas
-```
+- Provisiona EKS, Node Group, ECR e o NLB interno (modo padrão).
+- Provisiona o API Gateway HTTP, VPC Link e rotas que integram a API e as Lambdas.
+- Publica parâmetros SSM consumidos pelos demais repositórios.
+- Não constrói imagens, não cria roles IAM de EKS (pré-requisito manual) nem provisiona RDS, VPC ou Lambdas.
 
 ## Tecnologias utilizadas
 
 - Terraform
-- AWS EKS e ECR
-- AWS Network Load Balancer
+- AWS EKS, ECR e Network Load Balancer
 - AWS API Gateway HTTP API e VPC Link
 - AWS SSM Parameter Store
-- Helm, somente no modo `aws_lbc`
+- Helm (somente no modo `aws_lbc`)
+- New Relic (adaptador opcional)
 - GitHub Actions
 
-## Sequência de Deploy (modo padrão `terraform_nlb`)
+## Solução integrada
 
-| Passo | Repositório | O que provisiona |
-|-------|-------------|-----------------|
-| 1 | oficina-infra-db | VPC, subnets, RDS SQL Server |
-| **2** | **oficina-infra-k8s core ← este** | EKS, ECR, NLB interno |
-| 3 | oficina-api | Migrations, Deployment, Service |
-| 4 | oficina-auth-lambda | Lambdas de autenticação |
-| **5** | **oficina-infra-k8s API Gateway ← este** | Entrada pública (HTTP API) |
-| 6 | oficina-api (opcional) | Redeploy para URL pública em e-mails |
+A solução Oficina é composta por 4 repositórios que formam um sistema de gestão de oficina mecânica na AWS.
 
-No modo `aws_lbc`, inserir `oficina-infra-k8s addons` entre os passos 2 e 3.
+```mermaid
+graph LR
+  DB[oficina-infra-db<br/>VPC + RDS] --> K8S_CORE[oficina-infra-k8s core<br/>EKS + ECR + NLB]
+  DB --> LMB[oficina-auth-lambda<br/>auth-cpf + jwt-authorizer]
+  K8S_CORE --> API[oficina-api<br/>.NET 10 no EKS]
+  K8S_CORE --> APIGW[oficina-infra-k8s api-gateway<br/>HTTP API + VPC Link]
+  LMB --> APIGW
+  API --> APIGW
+```
 
-## Pré-requisitos de IAM
+| Passo | Repositório | Quando aplicar |
+|---|---|---|
+| 1 | [oficina-infra-db](https://github.com/fabianorodrigues/oficina-infra-db) | sempre |
+| 2 | [oficina-infra-k8s](https://github.com/fabianorodrigues/oficina-infra-k8s) — core | sempre |
+| 2a | [oficina-infra-k8s](https://github.com/fabianorodrigues/oficina-infra-k8s) — addons | apenas se `LOAD_BALANCER_PROVISIONING_MODE=aws_lbc` |
+| 3 | [oficina-api](https://github.com/fabianorodrigues/oficina-api) | sempre |
+| 4 | [oficina-auth-lambda](https://github.com/fabianorodrigues/oficina-auth-lambda) | sempre |
+| 5 | [oficina-infra-k8s](https://github.com/fabianorodrigues/oficina-infra-k8s) — api-gateway | sempre |
+| 6 | [oficina-api](https://github.com/fabianorodrigues/oficina-api) — redeploy | se o pod precisar refletir `public-base-url` em e-mails |
 
-As roles IAM do EKS **devem pré-existir** antes do deploy. O workflow não as cria. São necessárias duas roles:
+Cada README detalha apenas a responsabilidade do seu repositório. Para o passo a passo dos demais, consulte os READMEs correspondentes.
+
+## Arquitetura
+
+```mermaid
+graph TB
+  subgraph CORE[root core — sempre]
+    EKS[EKS Cluster]
+    ECR[ECR Repository]
+    NLB[NLB interno]
+    SSM1[(SSM listener-arn)]
+  end
+  subgraph ADDONS[root addons — apenas aws_lbc]
+    LBC[Load Balancer Controller]
+  end
+  subgraph APIGW[root api-gateway — sempre]
+    HTTP[HTTP API + VPC Link]
+    SSM2[(SSM public-url)]
+  end
+  subgraph OBS[root observability — opcional]
+    NR[New Relic]
+  end
+  CORE --> APIGW
+  LBC -.aws_lbc.-> NLB
+  OBS -.-> CORE
+```
+
+## Estrutura de roots Terraform
+
+| Root | Propósito | Quando aplicar |
+| --- | --- | --- |
+| `terraform/` (core) | EKS, Node Group, ECR e NLB interno (modo `terraform_nlb`) | sempre |
+| `terraform/addons/` | AWS Load Balancer Controller via Helm | apenas no modo `aws_lbc` |
+| `terraform/api-gateway/` | HTTP API, VPC Link, rotas e integrações | sempre, após [oficina-api](https://github.com/fabianorodrigues/oficina-api) e [oficina-auth-lambda](https://github.com/fabianorodrigues/oficina-auth-lambda) |
+| `terraform/observability/` | Adaptador New Relic (dashboards, alertas, Synthetic Monitor) | opcional |
+
+Cada root tem `backend.tf` próprio e state isolado em `s3://<bucket-de-state>/oficina-infra-k8s/<ambiente>/{core|addons|api-gateway|observability}/terraform.tfstate`.
+
+## Pré-requisitos manuais (IAM Roles do EKS)
+
+As roles IAM do EKS **devem pré-existir** antes do deploy — o workflow não as cria. São necessárias duas roles distintas:
 
 **Role do control plane** (`TF_VAR_eks_cluster_role_arn`)
+
 - Trust policy: `eks.amazonaws.com`
-- Política gerenciada: `arn:aws:iam::aws:policy/AmazonEKSClusterPolicy`
+- Política gerenciada: `AmazonEKSClusterPolicy`
 
 **Role dos nodes** (`TF_VAR_eks_node_role_arn`)
+
 - Trust policy: `ec2.amazonaws.com`
 - Políticas gerenciadas:
-  - `arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy`
-  - `arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy`
-  - `arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly`
+  - `AmazonEKSWorkerNodePolicy`
+  - `AmazonEKS_CNI_Policy`
+  - `AmazonEC2ContainerRegistryReadOnly`
 
 Para listar as roles disponíveis na conta e obter os ARNs:
 
 ```powershell
 $env:AWS_REGION="<regiao>"
 
-# Listar roles com nome contendo "eks"
 aws iam list-roles --query "Roles[?contains(RoleName,'eks')].{Nome:RoleName,ARN:Arn}" --output table
-
-# Obter ARN de uma role específica pelo nome
 aws iam get-role --role-name "<nome-da-role>" --query "Role.Arn" --output text
 ```
 
-## Configuração necessária
+## Modos de provisionamento do Load Balancer
 
-Configure no GitHub Actions:
+A variável `LOAD_BALANCER_PROVISIONING_MODE` define como o NLB é criado:
 
-| Nome | Tipo | Uso |
+| Modo | Quem cria o NLB | Quem grava `backend-listener-arn` no SSM | Precisa rodar `addons`? |
+| --- | --- | --- | --- |
+| `terraform_nlb` (padrão) | Terraform deste repositório (root `core`) | Terraform deste repositório (root `core`) | não |
+| `aws_lbc` | AWS Load Balancer Controller (via Kubernetes Service) | Workflow do [oficina-api](https://github.com/fabianorodrigues/oficina-api) após o Service subir | sim |
+
+No modo `aws_lbc`, a variável `TF_VAR_aws_load_balancer_controller_iam_mode` define `node` (padrão, herda da node IAM role) ou `irsa` (role dedicada com OIDC; recomendado).
+
+## Configuração
+
+Configure no GitHub Actions.
+
+### Obrigatório
+
+| Nome | Tipo | Descrição |
 | --- | --- | --- |
-| `AWS_ACCESS_KEY_ID` | Secret | Autenticação AWS |
-| `AWS_SECRET_ACCESS_KEY` | Secret | Autenticação AWS |
-| `AWS_SESSION_TOKEN` | Secret opcional | Credenciais temporárias |
+| `AWS_ACCESS_KEY_ID` | Secret | Credencial AWS |
+| `AWS_SECRET_ACCESS_KEY` | Secret | Credencial AWS |
 | `AWS_REGION` | Secret | Região AWS |
-| `TF_STATE_BUCKET` | Secret | Backend S3 e leitura do state do `oficina-infra-db` |
-| `TF_VAR_eks_cluster_role_arn` | Secret | ARN da role IAM pré-existente do control plane EKS |
-| `TF_VAR_eks_node_role_arn` | Secret | ARN da role IAM pré-existente do node group |
-| `PROJECT_NAME` | Variable opcional | Prefixo lógico; padrão `oficina` |
-| `ENVIRONMENT` | Variable opcional | Ambiente; padrão `dev` |
-| `EKS_CLUSTER_NAME` | Variable opcional | Nome do cluster; padrão `oficina-eks` |
-| `ECR_REPOSITORY_NAME` | Variable opcional | Nome do ECR; padrão `oficina-api` |
-| `LOAD_BALANCER_PROVISIONING_MODE` | Variable opcional | `terraform_nlb` padrão ou `aws_lbc` |
-| `API_NODE_PORT` | Variable opcional | NodePort da API; padrão `30080` |
-| `TF_VAR_aws_load_balancer_controller_iam_mode` | Variable opcional | `node` ou `irsa`, usado apenas no modo `aws_lbc` |
-| `AUTH_FUNCTION_NAME` | Variable opcional | Lambda Auth; padrão `oficina-auth-cpf` |
-| `AUTHORIZER_FUNCTION_NAME` | Variable opcional | Lambda Authorizer; padrão `oficina-jwt-authorizer` |
+| `TF_STATE_BUCKET` | Secret | Bucket S3 do state; criado automaticamente pelo workflow se não existir |
+| `TF_VAR_eks_cluster_role_arn` | Secret | ARN da role do control plane EKS (ver pré-requisitos) |
+| `TF_VAR_eks_node_role_arn` | Secret | ARN da role do node group (ver pré-requisitos) |
 
-O range NodePort `30000-32767` deve permitir apenas tráfego interno da VPC. A regra existente usa o CIDR da VPC e nunca deve ser alterada para `0.0.0.0/0`.
+### Opcional
 
-## Como executar
+| Nome | Tipo | Default | Descrição |
+| --- | --- | --- | --- |
+| `AWS_SESSION_TOKEN` | Secret | — | Credenciais temporárias (STS) |
+| `PROJECT_NAME` | Variable | `oficina` | Prefixo lógico |
+| `ENVIRONMENT` | Variable | `dev` | Ambiente |
+| `EKS_CLUSTER_NAME` | Variable | `oficina-eks` | Nome do cluster |
+| `ECR_REPOSITORY_NAME` | Variable | `oficina-api` | Nome do repositório ECR |
+| `LOAD_BALANCER_PROVISIONING_MODE` | Variable | `terraform_nlb` | `terraform_nlb` ou `aws_lbc` |
+| `API_NODE_PORT` | Variable | `30080` | NodePort da API (faixa 30000-32767) |
+| `TF_VAR_aws_load_balancer_controller_iam_mode` | Variable | `node` | `node` ou `irsa`; usado apenas no modo `aws_lbc` |
+| `AUTH_FUNCTION_NAME` | Variable | `oficina-auth-cpf` | Nome da Lambda de autenticação (consumida pelo root `api-gateway`) |
+| `AUTHORIZER_FUNCTION_NAME` | Variable | `oficina-jwt-authorizer` | Nome da Lambda authorizer |
 
-### Core (passo 2)
+A regra de Security Group do NodePort restringe a faixa `30000-32767` ao CIDR da VPC. Não altere para `0.0.0.0/0`.
 
-Pull requests executam `Terraform Check`, com `fmt`, `init -backend=false` e `validate`.
+## Execução
+
+### Root core (passo 2)
+
+Pull requests executam `Terraform Check` com `fmt`, `init -backend=false` e `validate`.
 
 Após o merge na `main`, execute manualmente:
 
@@ -129,11 +162,11 @@ Após o merge na `main`, execute manualmente:
 GitHub Actions > Terraform Apply > Run workflow
 ```
 
-No modo `terraform_nlb`, o job de addons é **ignorado automaticamente**. O Target Group pode ficar sem targets saudáveis até o deploy da `oficina-api`; isso é esperado e não deve falhar o apply do core.
+No modo `terraform_nlb`, o job de addons é ignorado. O Target Group permanece sem targets saudáveis até o deploy do [oficina-api](https://github.com/fabianorodrigues/oficina-api); isso é esperado.
 
 No modo `aws_lbc`, o mesmo workflow também aplica os addons (AWS Load Balancer Controller via Helm).
 
-### API Gateway (passo 5)
+### Root api-gateway (passo 5)
 
 Após o deploy da API e das Lambdas, execute:
 
@@ -141,19 +174,26 @@ Após o deploy da API e das Lambdas, execute:
 GitHub Actions > Terraform API Gateway Apply > Run workflow
 ```
 
-## Como validar pela AWS
+### Root observability (opcional)
 
-### Após o core (passo 2)
+Pull requests e push na `main` executam apenas `validate` e `plan`. O `apply` exige `workflow_dispatch` com o input `apply=true`.
 
-Console:
+## Validação
+
+### Console — após o root core
 
 - Em EKS, confirme cluster e node group ativos.
 - Em ECR, confirme o repositório da API.
-- Em EC2 Load Balancers, no modo `terraform_nlb`, confirme NLB interno.
-- Em SSM Parameter Store, no modo `terraform_nlb`, confirme `/${PROJECT_NAME}/${ENVIRONMENT}/api/backend-listener-arn`.
+- Em EC2 > Load Balancers (modo `terraform_nlb`), confirme o NLB interno.
+- Em SSM Parameter Store (modo `terraform_nlb`), confirme `/${PROJECT_NAME}/${ENVIRONMENT}/api/backend-listener-arn`.
 - Em Security Groups, confirme NodePort restrito ao CIDR da VPC.
 
-CLI:
+### Console — após o root api-gateway
+
+- Em API Gateway, confirme HTTP API, VPC Link e rotas (`POST /api/auth/cpf`, `GET /health`, `ANY /api/{proxy+}`).
+- Em SSM Parameter Store, confirme `/${PROJECT_NAME}/${ENVIRONMENT}/api/public-base-url`.
+
+### CLI (PowerShell) — após o root core
 
 ```powershell
 $env:AWS_REGION="<regiao>"
@@ -168,38 +208,66 @@ aws ecr describe-repositories --repository-names $env:ECR_REPOSITORY_NAME --regi
 aws ssm get-parameter --name "/$($env:PROJECT_NAME)/$($env:ENVIRONMENT)/api/backend-listener-arn" --region $env:AWS_REGION --query "Parameter.Name"
 ```
 
-### Após o API Gateway (passo 5)
-
-Console:
-
-- Em API Gateway, confirme HTTP API, VPC Link e rotas (`POST /api/auth/cpf`, `GET /health`, `ANY /api/{proxy+}`).
-- Em SSM Parameter Store, confirme `/${PROJECT_NAME}/${ENVIRONMENT}/api/public-base-url`.
-
-CLI:
+### CLI (PowerShell) — após o root api-gateway
 
 ```powershell
-aws apigatewayv2 get-apis --region $env:AWS_REGION --query "Items[?contains(Name,'$($env:PROJECT_NAME)')].{Nome:Name,Protocolo:ProtocolType,URL:ApiEndpoint}"
-aws ssm get-parameter --name "/$($env:PROJECT_NAME)/$($env:ENVIRONMENT)/api/public-base-url" --region $env:AWS_REGION --query "Parameter.Value" --output text
+aws apigatewayv2 get-apis --region $env:AWS_REGION --query "Items[?contains(Name,'$($env:PROJECT_NAME)')].{Nome:Name,Protocolo:ProtocolType}"
+aws ssm get-parameter --name "/$($env:PROJECT_NAME)/$($env:ENVIRONMENT)/api/public-base-url" --region $env:AWS_REGION --query "Parameter.Name"
 ```
 
-## Como validar localmente
+## Observabilidade
 
-Execute apenas validações não destrutivas:
+O padrão da solução é independente de fornecedor: aplicações expõem sinais por OpenTelemetry/OTLP e logs JSON com campos canônicos como `service.name`, `correlationId` e `eventType`. O root `terraform/observability` é apenas um adaptador opcional para validar esses sinais no New Relic, provisionando dashboards, alertas, workflow de notificação e Synthetic Monitor. O padrão é seguro: `enable_new_relic=false` permite `validate` sem credenciais.
+
+### Configurar
+
+| Nome | Tipo | Obrigatório quando habilitado | Default | Descrição |
+| --- | --- | --- | --- | --- |
+| `NEW_RELIC_LICENSE_KEY` | Secret | Sim | — | License key usada pela Kubernetes integration |
+| `NEW_RELIC_USER_API_KEY` | Secret | Sim | — | User API key usada pelo provider Terraform New Relic |
+| `NEW_RELIC_ACCOUNT_ID` | Secret | Sim | — | Account ID New Relic |
+| `NEW_RELIC_NOTIFICATION_EMAIL` | Secret | Sim | — | E-mail destino das notificações |
+| `NEW_RELIC_REGION` | Variable | Não | `US` | `US` ou `EU` |
+| `API_GATEWAY_URL` | Secret ou Variable | Não | vazio (desabilita Synthetic) | URL pública usada pelo Synthetic Monitor |
+
+A variável Terraform `enable_new_relic` deve ser `true` para criar recursos no New Relic. Para que APM e traces do [oficina-api](https://github.com/fabianorodrigues/oficina-api) cheguem ao New Relic, configure o workflow `deploy-api` com variáveis OTLP genéricas:
+
+```text
+OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp.nr-data.net
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+OTEL_EXPORTER_OTLP_HEADERS=api-key=<license-key>
+```
+
+### Executar
+
+```text
+GitHub Actions > Terraform Observability > Run workflow > apply = true
+```
+
+Quando aplicado, o workflow instala o chart `nri-bundle` no namespace `newrelic`, cria dashboards, condições de alerta, workflow de notificação e Synthetic Monitor. Os valores sensíveis são mascarados pelo workflow.
+
+### Validar
+
+Console New Relic:
+
+- **APM**: confirme entidade `oficina-api` com `service.name = 'oficina-api'` e transações em `/api/*` e `/health`.
+- **Logs**: filtre por `correlationId` e `eventType` (`OrdemServicoCriada`, `OrdemServicoStatusAlterado`, `OrdemServicoFalha`, `EmailOrcamentoFalha`) quando a coleta de logs do Kubernetes estiver habilitada.
+- **Kubernetes**: confirme cluster, nodes, pods e logs dos pods sob a integração `nri-bundle`.
+- **Dashboards**: latência da API, erros 5xx, uptime, CPU e memória Kubernetes, volume diário de OS, tempo médio por status, falhas de OS.
+- **Alertas**: force uma condição controlada ou reduza thresholds temporariamente e confirme a abertura da issue.
+- **Synthetic**: quando `API_GATEWAY_URL` estiver configurada, confirme o monitor de `/health` validando a string `Healthy`.
+
+CLI (PowerShell) — componentes Kubernetes do `nri-bundle`:
 
 ```powershell
-terraform -chdir=terraform fmt -check -recursive
-terraform -chdir=terraform init -backend=false
-terraform -chdir=terraform validate
+$env:AWS_REGION="<regiao>"
+$env:EKS_CLUSTER_NAME="<nome-do-cluster>"
 
-terraform -chdir=terraform/addons fmt -check -recursive
-terraform -chdir=terraform/addons init -backend=false
-terraform -chdir=terraform/addons validate
-
-terraform -chdir=terraform/api-gateway fmt -check -recursive
-terraform -chdir=terraform/api-gateway init -backend=false
-terraform -chdir=terraform/api-gateway validate
+aws eks update-kubeconfig --name $env:EKS_CLUSTER_NAME --region $env:AWS_REGION
+kubectl get pods -n newrelic
+kubectl get daemonset -n newrelic
 ```
 
 ## Próxima etapa
 
-No modo `terraform_nlb`, executar `oficina-api`. No modo `aws_lbc`, executar addons antes da API. Depois publicar `oficina-auth-lambda` e voltar a este repositório para aplicar `terraform/api-gateway`.
+No modo `terraform_nlb`, executar [oficina-api](https://github.com/fabianorodrigues/oficina-api). No modo `aws_lbc`, executar o root `terraform/addons` antes da API. Em seguida, publicar [oficina-auth-lambda](https://github.com/fabianorodrigues/oficina-auth-lambda) e voltar a este repositório para aplicar o root `terraform/api-gateway`.

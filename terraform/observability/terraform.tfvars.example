@@ -1,0 +1,22 @@
+enable_new_relic = false
+
+aws_region          = "us-east-1"
+project_name        = "oficina"
+environment         = "dev"
+remote_state_bucket = "CHANGE_ME_STATE_BUCKET"
+remote_state_region = "us-east-1"
+core_remote_state_key = "oficina-infra-k8s/dev/core/terraform.tfstate"
+
+new_relic_region             = "US"
+new_relic_account_id         = ""
+new_relic_license_key        = ""
+new_relic_user_api_key       = ""
+new_relic_notification_email = ""
+
+api_gateway_url            = ""
+synthetic_locations_public = ["AWS_US_EAST_1"]
+
+api_5xx_threshold                 = 5
+ordem_servico_failure_threshold   = 1
+kubernetes_cpu_threshold_percent  = 85
+kubernetes_memory_threshold_percent = 85
