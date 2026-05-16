@@ -42,6 +42,7 @@ graph LR
 | 4 | [oficina-auth-lambda](https://github.com/fabianorodrigues/oficina-auth-lambda) | sempre |
 | 5 | [oficina-infra-k8s](https://github.com/fabianorodrigues/oficina-infra-k8s) — api-gateway | sempre |
 | 6 | [oficina-api](https://github.com/fabianorodrigues/oficina-api) — redeploy | se o pod precisar refletir `public-base-url` em e-mails |
+| 7 | [oficina-infra-k8s](https://github.com/fabianorodrigues/oficina-infra-k8s) — observability | opcional — somente após passo 5 |
 
 Cada README detalha apenas a responsabilidade do seu repositório. Para o passo a passo dos demais, consulte os READMEs correspondentes.
 
@@ -52,7 +53,7 @@ graph TB
   subgraph CORE[root core — sempre]
     EKS[EKS Cluster]
     ECR[ECR Repository]
-    NLB[NLB interno]
+    NLB_TF[NLB interno]
     SSM1[(SSM listener-arn)]
   end
   subgraph ADDONS[root addons — apenas aws_lbc]
@@ -66,7 +67,8 @@ graph TB
     NR[New Relic]
   end
   CORE --> APIGW
-  LBC -.aws_lbc.-> NLB
+  LBC -.aws_lbc.-> NLB_TF
+  APIGW --> SSM2
   OBS -.-> CORE
 ```
 
@@ -77,7 +79,7 @@ graph TB
 | `terraform/` (core) | EKS, Node Group, ECR e NLB interno (modo `terraform_nlb`) | sempre |
 | `terraform/addons/` | AWS Load Balancer Controller via Helm | apenas no modo `aws_lbc` |
 | `terraform/api-gateway/` | HTTP API, VPC Link, rotas e integrações | sempre, após [oficina-api](https://github.com/fabianorodrigues/oficina-api) e [oficina-auth-lambda](https://github.com/fabianorodrigues/oficina-auth-lambda) |
-| `terraform/observability/` | Adaptador New Relic (dashboards, alertas, Synthetic Monitor) | opcional |
+| `terraform/observability/` | Adaptador New Relic (dashboards, alertas, Synthetic Monitor) | opcional — somente após passo 5 (API Gateway) |
 
 Cada root tem `backend.tf` próprio e state isolado em `s3://<bucket-de-state>/oficina-infra-k8s/<ambiente>/{core|addons|api-gateway|observability}/terraform.tfstate`.
 
@@ -133,7 +135,7 @@ Configure no GitHub Actions.
 | `TF_VAR_eks_cluster_role_arn` | Secret | ARN da role do control plane EKS (ver pré-requisitos) |
 | `TF_VAR_eks_node_role_arn` | Secret | ARN da role do node group (ver pré-requisitos) |
 
-### Opcional
+### Opcional / com default
 
 | Nome | Tipo | Default | Descrição |
 | --- | --- | --- | --- |
@@ -178,6 +180,8 @@ GitHub Actions > Terraform API Gateway Apply > Run workflow
 
 Pull requests e push na `main` executam apenas `validate` e `plan`. O `apply` exige `workflow_dispatch` com o input `apply=true`.
 
+Execute o `apply` somente após o passo 5, com API Gateway ativo e URL pública validada. O Synthetic Monitor usa `API_GATEWAY_URL`, disponível apenas depois do root `api-gateway`, e dashboards/APM só terão dados úteis após a API gerar tráfego real.
+
 ## Validação
 
 ### Console — após o root core
@@ -217,22 +221,31 @@ aws ssm get-parameter --name "/$($env:PROJECT_NAME)/$($env:ENVIRONMENT)/api/publ
 
 ## Observabilidade
 
-O padrão da solução é independente de fornecedor: aplicações expõem sinais por OpenTelemetry/OTLP e logs JSON com campos canônicos como `service.name`, `correlationId` e `eventType`. O root `terraform/observability` é apenas um adaptador opcional para validar esses sinais no New Relic, provisionando dashboards, alertas, workflow de notificação e Synthetic Monitor. O padrão é seguro: `enable_new_relic=false` permite `validate` sem credenciais.
+O padrão da solução é independente de fornecedor: aplicações expõem sinais por OpenTelemetry/OTLP e logs JSON com campos canônicos como `service.name`, `correlationId` e `eventType`. O root `terraform/observability` é apenas um adaptador opcional para validar esses sinais no New Relic, provisionando dashboards, alertas, workflow de notificação e Synthetic Monitor. Ele é o passo 7 da solução: opcional, mas deve ser aplicado somente após o passo 5 (API Gateway) estar concluído. O padrão é seguro: `enable_new_relic=false` permite `validate` sem credenciais.
 
 ### Configurar
 
-| Nome | Tipo | Obrigatório quando habilitado | Default | Descrição |
-| --- | --- | --- | --- | --- |
-| `NEW_RELIC_LICENSE_KEY` | Secret | Sim | — | License key usada pela Kubernetes integration |
-| `NEW_RELIC_USER_API_KEY` | Secret | Sim | — | User API key usada pelo provider Terraform New Relic |
-| `NEW_RELIC_ACCOUNT_ID` | Secret | Sim | — | Account ID New Relic |
-| `NEW_RELIC_NOTIFICATION_EMAIL` | Secret | Sim | — | E-mail destino das notificações |
-| `NEW_RELIC_REGION` | Variable | Não | `US` | `US` ou `EU` |
-| `API_GATEWAY_URL` | Secret ou Variable | Não | vazio (desabilita Synthetic) | URL pública usada pelo Synthetic Monitor |
+### Obrigatório
+
+| Nome | Tipo | Descrição |
+| --- | --- | --- |
+| `NEW_RELIC_LICENSE_KEY` | Secret | License key usada pela Kubernetes integration |
+| `NEW_RELIC_USER_API_KEY` | Secret | User API key usada pelo provider Terraform New Relic |
+| `NEW_RELIC_ACCOUNT_ID` | Secret | Account ID New Relic |
+| `NEW_RELIC_NOTIFICATION_EMAIL` | Secret | E-mail destino das notificações |
+
+### Opcional / com default
+
+| Nome | Tipo | Default | Descrição |
+| --- | --- | --- | --- |
+| `NEW_RELIC_REGION` | Variable | `US` | `US` ou `EU` |
+| `API_GATEWAY_URL` | Secret ou Variable | vazio (desabilita Synthetic) | URL pública criada pelo root `api-gateway` e usada pelo Synthetic Monitor |
 
 A variável Terraform `enable_new_relic` deve ser `true` para criar recursos no New Relic. Para que APM e traces do [oficina-api](https://github.com/fabianorodrigues/oficina-api) cheguem ao New Relic, configure o workflow `deploy-api` com as variáveis OTLP descritas no README da API.
 
 ### Executar
+
+Execute somente após o passo 5 (API Gateway) estar concluído e a URL pública responder em `/health`.
 
 ```text
 GitHub Actions > Terraform Observability > Run workflow > apply = true
@@ -264,4 +277,4 @@ kubectl get daemonset -n newrelic
 
 ## Próxima etapa
 
-No modo `terraform_nlb`, executar [oficina-api](https://github.com/fabianorodrigues/oficina-api). No modo `aws_lbc`, executar o root `terraform/addons` antes da API. Em seguida, publicar [oficina-auth-lambda](https://github.com/fabianorodrigues/oficina-auth-lambda) e voltar a este repositório para aplicar o root `terraform/api-gateway`.
+No modo `terraform_nlb`, executar [oficina-api](https://github.com/fabianorodrigues/oficina-api). No modo `aws_lbc`, executar o root `terraform/addons` antes da API. Em seguida, publicar [oficina-auth-lambda](https://github.com/fabianorodrigues/oficina-auth-lambda), voltar a este repositório para aplicar o root `terraform/api-gateway` e, somente depois da URL pública validada, aplicar o root `terraform/observability` se New Relic for usado.
