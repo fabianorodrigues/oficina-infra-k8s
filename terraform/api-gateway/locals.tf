@@ -5,7 +5,7 @@ locals {
   name_prefix                         = lower("${var.project_name}-${var.environment}")
   backend_listener_arn                = sensitive(data.aws_ssm_parameter.backend_listener.value)
   auth_integration_uri                = sensitive(data.aws_lambda_function.auth.invoke_arn)
-  auth_authorizer_uri                 = sensitive("arn:aws:apigateway:${var.aws_region}:lambda:path/2015-03-31/functions/${data.aws_lambda_function.authorizer.invoke_arn}/invocations")
+  auth_authorizer_uri                 = sensitive(data.aws_lambda_function.authorizer.invoke_arn)
   private_subnet_ids                  = data.terraform_remote_state.db.outputs.private_subnet_ids
   vpc_id                              = data.terraform_remote_state.db.outputs.vpc_id
   vpc_cidr_block                      = data.terraform_remote_state.db.outputs.vpc_cidr_block
