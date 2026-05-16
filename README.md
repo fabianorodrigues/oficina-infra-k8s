@@ -230,13 +230,7 @@ O padrão da solução é independente de fornecedor: aplicações expõem sinai
 | `NEW_RELIC_REGION` | Variable | Não | `US` | `US` ou `EU` |
 | `API_GATEWAY_URL` | Secret ou Variable | Não | vazio (desabilita Synthetic) | URL pública usada pelo Synthetic Monitor |
 
-A variável Terraform `enable_new_relic` deve ser `true` para criar recursos no New Relic. Para que APM e traces do [oficina-api](https://github.com/fabianorodrigues/oficina-api) cheguem ao New Relic, configure o workflow `deploy-api` com variáveis OTLP genéricas:
-
-```text
-OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp.nr-data.net
-OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
-OTEL_EXPORTER_OTLP_HEADERS=api-key=<license-key>
-```
+A variável Terraform `enable_new_relic` deve ser `true` para criar recursos no New Relic. Para que APM e traces do [oficina-api](https://github.com/fabianorodrigues/oficina-api) cheguem ao New Relic, configure o workflow `deploy-api` com as variáveis OTLP descritas no README da API.
 
 ### Executar
 
