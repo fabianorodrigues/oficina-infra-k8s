@@ -53,7 +53,7 @@ resource "newrelic_nrql_alert_condition" "ordem_servico_failure" {
   close_violations_on_expiration = true
 
   nrql {
-    query = "FROM Log SELECT count(*) WHERE eventType = 'OrdemServicoFalha' OR message LIKE '%OrdemServicoFalha%'"
+    query = "FROM Log SELECT count(*) WHERE eventType = 'OrdemServicoFalha' OR message LIKE '%OrdemServicoFalha%' OR log LIKE '%OrdemServicoFalha%'"
   }
 
   critical {
@@ -271,35 +271,46 @@ resource "newrelic_one_dashboard_json" "oficina" {
         name = "Ordens de Servico"
         widgets = [
           {
-            title         = "Volume diario de ordens de servico"
+            title         = "Volume de criacao de OS"
             layout        = { column = 1, row = 1, width = 6, height = 3 }
             visualization = { id = "viz.bar" }
             rawConfiguration = {
               nrqlQueries = [{
                 accountIds = [local.new_relic_account_id]
-                query      = "FROM Log SELECT count(*) WHERE eventType = 'OrdemServicoCriada' OR message LIKE '%OrdemServicoCriada%' TIMESERIES 1 day"
+                query      = "FROM Span SELECT count(*) WHERE service.name = 'oficina-api' AND span.kind = 'server' AND (name LIKE '%POST /api/ordens-servico%' OR (`http.route` = '/api/ordens-servico' AND (`http.request.method` = 'POST' OR `http.method` = 'POST')) OR (`url.path` = '/api/ordens-servico' AND (`http.request.method` = 'POST' OR `http.method` = 'POST'))) TIMESERIES"
               }]
             }
           },
           {
-            title         = "Tempo medio por status"
+            title         = "Latencia p95 das rotas de OS"
             layout        = { column = 7, row = 1, width = 6, height = 3 }
             visualization = { id = "viz.line" }
             rawConfiguration = {
               nrqlQueries = [{
                 accountIds = [local.new_relic_account_id]
-                query      = "FROM Log SELECT average(statusDurationMs) WHERE eventType = 'OrdemServicoStatusAlterado' OR message LIKE '%OrdemServicoStatusAlterado%' FACET statusNovo TIMESERIES"
+                query      = "FROM Span SELECT percentile(duration.ms, 95) WHERE service.name = 'oficina-api' AND span.kind = 'server' AND (name LIKE '%/api/ordens-servico%' OR name LIKE '%/api/minhas-ordens-servico%' OR `http.route` LIKE '/api/ordens-servico%' OR `http.route` LIKE '/api/minhas-ordens-servico%' OR `url.path` LIKE '/api/ordens-servico%' OR `url.path` LIKE '/api/minhas-ordens-servico%') TIMESERIES"
               }]
             }
           },
           {
-            title         = "Falhas no processamento de OS"
+            title         = "Erros 4xx/5xx em OS"
             layout        = { column = 1, row = 4, width = 6, height = 3 }
             visualization = { id = "viz.line" }
             rawConfiguration = {
               nrqlQueries = [{
                 accountIds = [local.new_relic_account_id]
-                query      = "FROM Log SELECT count(*) WHERE eventType = 'OrdemServicoFalha' OR message LIKE '%OrdemServicoFalha%' TIMESERIES"
+                query      = "FROM Span SELECT count(*) WHERE service.name = 'oficina-api' AND span.kind = 'server' AND (name LIKE '%/api/ordens-servico%' OR name LIKE '%/api/minhas-ordens-servico%' OR `http.route` LIKE '/api/ordens-servico%' OR `http.route` LIKE '/api/minhas-ordens-servico%' OR `url.path` LIKE '/api/ordens-servico%' OR `url.path` LIKE '/api/minhas-ordens-servico%') AND (`http.response.status_code` >= 400 OR `http.status_code` >= 400) TIMESERIES"
+              }]
+            }
+          },
+          {
+            title         = "Eventos de dominio de OS"
+            layout        = { column = 7, row = 4, width = 6, height = 3 }
+            visualization = { id = "viz.line" }
+            rawConfiguration = {
+              nrqlQueries = [{
+                accountIds = [local.new_relic_account_id]
+                query      = "FROM Log SELECT count(*) WHERE eventType IS NOT NULL OR message LIKE '%OrdemServico%' OR log LIKE '%OrdemServico%' FACET eventType TIMESERIES"
               }]
             }
           }
