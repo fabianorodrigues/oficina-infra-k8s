@@ -20,6 +20,7 @@ resource "newrelic_nrql_alert_condition" "api_5xx" {
   aggregation_delay              = 120
   fill_option                    = "static"
   fill_value                     = 0
+  expiration_duration            = 300
   close_violations_on_expiration = true
 
   nrql {
@@ -48,6 +49,7 @@ resource "newrelic_nrql_alert_condition" "ordem_servico_failure" {
   aggregation_delay              = 120
   fill_option                    = "static"
   fill_value                     = 0
+  expiration_duration            = 300
   close_violations_on_expiration = true
 
   nrql {
@@ -74,6 +76,7 @@ resource "newrelic_nrql_alert_condition" "kubernetes_cpu" {
   aggregation_window             = 60
   aggregation_method             = "event_flow"
   aggregation_delay              = 120
+  expiration_duration            = 300
   close_violations_on_expiration = true
 
   nrql {
@@ -100,6 +103,7 @@ resource "newrelic_nrql_alert_condition" "kubernetes_memory" {
   aggregation_window             = 60
   aggregation_method             = "event_flow"
   aggregation_delay              = 120
+  expiration_duration            = 300
   close_violations_on_expiration = true
 
   nrql {
