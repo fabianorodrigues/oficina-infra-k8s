@@ -86,7 +86,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: validate
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && inputs.apply == 'false'
 
     steps:
       - name: Checkout
@@ -135,12 +135,32 @@ jobs:
             "${NEW_RELIC_LICENSE_KEY}" \
             "${NEW_RELIC_USER_API_KEY}" \
             "${NEW_RELIC_ACCOUNT_ID}" \
-            "${NEW_RELIC_NOTIFICATION_EMAIL}" \
-            "${API_GATEWAY_URL:-}"; do
+            "${NEW_RELIC_NOTIFICATION_EMAIL}"; do
             if [ -n "${value}" ]; then
               echo "::add-mask::${value}"
             fi
           done
+
+          api_gateway_url_value="${API_GATEWAY_URL:-}"
+          if [ -n "${api_gateway_url_value}" ]; then
+            echo "::add-mask::${api_gateway_url_value}"
+          else
+            if api_gateway_url_value="$(aws ssm get-parameter \
+                --name "/${PROJECT_NAME}/${ENVIRONMENT}/api/public-base-url" \
+                --region "${AWS_REGION}" \
+                --query "Parameter.Value" \
+                --output text 2>/dev/null)"; then
+              if [ -n "${api_gateway_url_value}" ] && [ "${api_gateway_url_value}" != "None" ]; then
+                echo "::add-mask::${api_gateway_url_value}"
+              else
+                echo "Warning: API Gateway public URL was not found or could not be read. Synthetic Monitor will be disabled."
+                api_gateway_url_value=""
+              fi
+            else
+              echo "Warning: API Gateway public URL was not found or could not be read. Synthetic Monitor will be disabled."
+              api_gateway_url_value=""
+            fi
+          fi
 
           {
             printf 'TF_VAR_enable_new_relic=true\n'
@@ -154,7 +174,7 @@ jobs:
             printf 'TF_VAR_new_relic_user_api_key=%s\n' "${NEW_RELIC_USER_API_KEY}"
             printf 'TF_VAR_new_relic_account_id=%s\n' "${NEW_RELIC_ACCOUNT_ID}"
             printf 'TF_VAR_new_relic_notification_email=%s\n' "${NEW_RELIC_NOTIFICATION_EMAIL}"
-            printf 'TF_VAR_api_gateway_url=%s\n' "${API_GATEWAY_URL:-}"
+            printf 'TF_VAR_api_gateway_url=%s\n' "${api_gateway_url_value}"
           } >> "${GITHUB_ENV}"
 
       - name: Terraform init
@@ -183,20 +203,11 @@ jobs:
 
           echo "Terraform observability plan completed."
 
-      - name: Upload plan
-        if: inputs.apply == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: terraform-observability-plan
-          path: terraform/observability/tfplan
-          if-no-files-found: error
-          retention-days: 1
-
   apply:
     name: Manual apply
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: plan
+    needs: validate
     if: github.event_name == 'workflow_dispatch' && inputs.apply == 'true'
 
     steps:
@@ -205,12 +216,6 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
-
-      - name: Download plan
-        uses: actions/download-artifact@v4
-        with:
-          name: terraform-observability-plan
-          path: terraform/observability
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
@@ -225,16 +230,59 @@ jobs:
         run: |
           set -euo pipefail
 
+          required_vars=(
+            AWS_ACCESS_KEY_ID
+            AWS_SECRET_ACCESS_KEY
+            AWS_REGION
+            TF_STATE_BUCKET
+            NEW_RELIC_LICENSE_KEY
+            NEW_RELIC_USER_API_KEY
+            NEW_RELIC_ACCOUNT_ID
+            NEW_RELIC_NOTIFICATION_EMAIL
+          )
+
+          missing=0
+          for var_name in "${required_vars[@]}"; do
+            if [ -z "${!var_name:-}" ]; then
+              echo "${var_name} is required for observability plan/apply."
+              missing=1
+            fi
+          done
+
+          if [ "${missing}" -ne 0 ]; then
+            exit 1
+          fi
+
           for value in \
             "${NEW_RELIC_LICENSE_KEY}" \
             "${NEW_RELIC_USER_API_KEY}" \
             "${NEW_RELIC_ACCOUNT_ID}" \
-            "${NEW_RELIC_NOTIFICATION_EMAIL}" \
-            "${API_GATEWAY_URL:-}"; do
+            "${NEW_RELIC_NOTIFICATION_EMAIL}"; do
             if [ -n "${value}" ]; then
               echo "::add-mask::${value}"
             fi
           done
+
+          api_gateway_url_value="${API_GATEWAY_URL:-}"
+          if [ -n "${api_gateway_url_value}" ]; then
+            echo "::add-mask::${api_gateway_url_value}"
+          else
+            if api_gateway_url_value="$(aws ssm get-parameter \
+                --name "/${PROJECT_NAME}/${ENVIRONMENT}/api/public-base-url" \
+                --region "${AWS_REGION}" \
+                --query "Parameter.Value" \
+                --output text 2>/dev/null)"; then
+              if [ -n "${api_gateway_url_value}" ] && [ "${api_gateway_url_value}" != "None" ]; then
+                echo "::add-mask::${api_gateway_url_value}"
+              else
+                echo "Warning: API Gateway public URL was not found or could not be read. Synthetic Monitor will be disabled."
+                api_gateway_url_value=""
+              fi
+            else
+              echo "Warning: API Gateway public URL was not found or could not be read. Synthetic Monitor will be disabled."
+              api_gateway_url_value=""
+            fi
+          fi
 
           {
             printf 'TF_VAR_enable_new_relic=true\n'
@@ -248,7 +296,7 @@ jobs:
             printf 'TF_VAR_new_relic_user_api_key=%s\n' "${NEW_RELIC_USER_API_KEY}"
             printf 'TF_VAR_new_relic_account_id=%s\n' "${NEW_RELIC_ACCOUNT_ID}"
             printf 'TF_VAR_new_relic_notification_email=%s\n' "${NEW_RELIC_NOTIFICATION_EMAIL}"
-            printf 'TF_VAR_api_gateway_url=%s\n' "${API_GATEWAY_URL:-}"
+            printf 'TF_VAR_api_gateway_url=%s\n' "${api_gateway_url_value}"
           } >> "${GITHUB_ENV}"
 
       - name: Terraform init
@@ -264,6 +312,18 @@ jobs:
           } > backend.hcl
 
           terraform init -backend-config=backend.hcl
+
+      - name: Terraform plan
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! terraform plan -out=tfplan >/tmp/terraform-observability-plan.log 2>&1; then
+            echo "Terraform observability plan failed."
+            exit 1
+          fi
+
+          echo "Terraform observability plan completed."
 
       - name: Terraform apply
         shell: bash
