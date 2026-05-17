@@ -207,7 +207,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: apply-core
-    if: ${{ vars.LOAD_BALANCER_PROVISIONING_MODE == 'aws_lbc' }}
 
     defaults:
       run:
@@ -242,10 +241,60 @@ jobs:
 
           aws eks update-kubeconfig --name "${EKS_CLUSTER_NAME}" --region "${AWS_REGION}" >/dev/null 2>&1
 
-          if ! kubectl auth can-i get deployments -n kube-system >/dev/null 2>&1; then
-            echo "Falha ao validar AWS Load Balancer Controller."
-            exit 1
-          fi
+          require_can_i() {
+            local verb="$1"
+            local resource="$2"
+            local namespace="${3:-}"
+            local result
+
+            if [ -n "${namespace}" ]; then
+              result="$(kubectl auth can-i "${verb}" "${resource}" -n "${namespace}")"
+            else
+              result="$(kubectl auth can-i "${verb}" "${resource}")"
+            fi
+
+            if [ "${result}" != "yes" ]; then
+              echo "Permissao Kubernetes insuficiente para instalar addons do cluster."
+              exit 1
+            fi
+          }
+
+          require_can_i get deployments kube-system
+          require_can_i create deployments kube-system
+          require_can_i patch deployments kube-system
+          require_can_i update deployments kube-system
+          require_can_i get secrets kube-system
+          require_can_i list secrets kube-system
+          require_can_i create secrets kube-system
+          require_can_i patch secrets kube-system
+          require_can_i update secrets kube-system
+          require_can_i delete secrets kube-system
+          require_can_i get configmaps kube-system
+          require_can_i list configmaps kube-system
+          require_can_i create configmaps kube-system
+          require_can_i patch configmaps kube-system
+          require_can_i update configmaps kube-system
+          require_can_i get serviceaccounts kube-system
+          require_can_i create serviceaccounts kube-system
+          require_can_i patch serviceaccounts kube-system
+          require_can_i get services kube-system
+          require_can_i create services kube-system
+          require_can_i patch services kube-system
+          require_can_i get clusterroles.rbac.authorization.k8s.io
+          require_can_i list clusterroles.rbac.authorization.k8s.io
+          require_can_i create clusterroles.rbac.authorization.k8s.io
+          require_can_i patch clusterroles.rbac.authorization.k8s.io
+          require_can_i update clusterroles.rbac.authorization.k8s.io
+          require_can_i get clusterrolebindings.rbac.authorization.k8s.io
+          require_can_i list clusterrolebindings.rbac.authorization.k8s.io
+          require_can_i create clusterrolebindings.rbac.authorization.k8s.io
+          require_can_i patch clusterrolebindings.rbac.authorization.k8s.io
+          require_can_i update clusterrolebindings.rbac.authorization.k8s.io
+          require_can_i get apiservices.apiregistration.k8s.io
+          require_can_i list apiservices.apiregistration.k8s.io
+          require_can_i create apiservices.apiregistration.k8s.io
+          require_can_i patch apiservices.apiregistration.k8s.io
+          require_can_i update apiservices.apiregistration.k8s.io
 
       - name: Prepare Terraform variables
         shell: bash
@@ -259,6 +308,7 @@ jobs:
             printf 'TF_VAR_project_name=%s\n' "${PROJECT_NAME}"
             printf 'TF_VAR_environment=%s\n' "${ENVIRONMENT}"
             printf 'TF_VAR_aws_load_balancer_controller_iam_mode=%s\n' "${TF_VAR_aws_load_balancer_controller_iam_mode}"
+            printf 'TF_VAR_load_balancer_provisioning_mode=%s\n' "${LOAD_BALANCER_PROVISIONING_MODE}"
           } >> "${GITHUB_ENV}"
 
       - name: Terraform init addons
@@ -288,7 +338,31 @@ jobs:
 
           echo "Terraform addons apply completed."
 
+      - name: Validate Metrics Server
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! kubectl get deployment metrics-server -n kube-system >/dev/null 2>&1; then
+            echo "Falha ao validar Metrics Server."
+            exit 1
+          fi
+
+          if ! kubectl rollout status deployment/metrics-server -n kube-system --timeout=180s >/dev/null 2>&1; then
+            echo "Falha ao validar Metrics Server."
+            exit 1
+          fi
+
+          metrics_api_available="$(kubectl get apiservice v1beta1.metrics.k8s.io -o jsonpath='{.status.conditions[?(@.type=="Available")].status}' 2>/dev/null || true)"
+          if [ "${metrics_api_available}" != "True" ]; then
+            echo "Metrics Server foi instalado, mas a Metrics API não ficou disponível."
+            exit 1
+          fi
+
+          echo "Metrics Server validated."
+
       - name: Validate AWS Load Balancer Controller
+        if: env.LOAD_BALANCER_PROVISIONING_MODE == 'aws_lbc'
         shell: bash
         run: |
           set -euo pipefail

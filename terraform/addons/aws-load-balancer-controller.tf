@@ -1,4 +1,6 @@
 resource "helm_release" "aws_load_balancer_controller" {
+  count = local.aws_load_balancer_controller_enabled ? 1 : 0
+
   name       = "aws-load-balancer-controller"
   repository = "https://aws.github.io/eks-charts"
   chart      = "aws-load-balancer-controller"

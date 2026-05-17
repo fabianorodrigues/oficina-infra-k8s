@@ -2,9 +2,10 @@
 
 ## Visão geral
 
-Repositório que provisiona a camada Kubernetes e a entrada pública da solução Oficina. Contém quatro roots Terraform independentes: cluster EKS e ECR, controlador opcional de Load Balancer, HTTP API com VPC Link e adaptador opcional de observabilidade New Relic.
+Repositório que provisiona a camada Kubernetes e a entrada pública da solução Oficina. Contém quatro roots Terraform independentes: cluster EKS e ECR, addons do cluster, HTTP API com VPC Link e adaptador opcional de observabilidade New Relic.
 
 - Provisiona EKS, Node Group, ECR e o NLB interno (modo padrão).
+- Provisiona Metrics Server como add-on do cluster para HPA e `kubectl top`.
 - Provisiona o API Gateway HTTP, VPC Link e rotas que integram a API e as Lambdas.
 - Publica parâmetros SSM consumidos pelos demais repositórios.
 - Não constrói imagens, não cria roles IAM de EKS (pré-requisito manual) nem provisiona RDS, VPC ou Lambdas.
@@ -15,7 +16,7 @@ Repositório que provisiona a camada Kubernetes e a entrada pública da soluçã
 - AWS EKS, ECR e Network Load Balancer
 - AWS API Gateway HTTP API e VPC Link
 - AWS SSM Parameter Store
-- Helm (somente no modo `aws_lbc`)
+- Helm
 - New Relic (adaptador opcional)
 - GitHub Actions
 
@@ -37,7 +38,7 @@ graph LR
 |---|---|---|
 | 1 | [oficina-infra-db](https://github.com/fabianorodrigues/oficina-infra-db) | sempre |
 | 2 | [oficina-infra-k8s](https://github.com/fabianorodrigues/oficina-infra-k8s) — core | sempre |
-| 2a | [oficina-infra-k8s](https://github.com/fabianorodrigues/oficina-infra-k8s) — addons | apenas se `LOAD_BALANCER_PROVISIONING_MODE=aws_lbc` |
+| 2a | [oficina-infra-k8s](https://github.com/fabianorodrigues/oficina-infra-k8s) — addons | sempre; AWS Load Balancer Controller apenas se `LOAD_BALANCER_PROVISIONING_MODE=aws_lbc` |
 | 3 | [oficina-api](https://github.com/fabianorodrigues/oficina-api) | sempre |
 | 4 | [oficina-auth-lambda](https://github.com/fabianorodrigues/oficina-auth-lambda) | sempre |
 | 5 | [oficina-infra-k8s](https://github.com/fabianorodrigues/oficina-infra-k8s) — api-gateway | sempre |
@@ -56,7 +57,8 @@ graph TB
     NLB_TF[NLB interno]
     SSM1[(SSM listener-arn)]
   end
-  subgraph ADDONS[root addons — apenas aws_lbc]
+  subgraph ADDONS[root addons — sempre]
+    MS[Metrics Server]
     LBC[Load Balancer Controller]
   end
   subgraph APIGW[root api-gateway — sempre]
@@ -67,6 +69,7 @@ graph TB
     NR[New Relic]
   end
   CORE --> APIGW
+  MS --> API
   LBC -.aws_lbc.-> NLB_TF
   APIGW --> SSM2
   OBS -.-> CORE
@@ -77,7 +80,7 @@ graph TB
 | Root | Propósito | Quando aplicar |
 | --- | --- | --- |
 | `terraform/` (core) | EKS, Node Group, ECR e NLB interno (modo `terraform_nlb`) | sempre |
-| `terraform/addons/` | AWS Load Balancer Controller via Helm | apenas no modo `aws_lbc` |
+| `terraform/addons/` | Metrics Server via Helm e AWS Load Balancer Controller condicional | sempre; AWS Load Balancer Controller apenas no modo `aws_lbc` |
 | `terraform/api-gateway/` | HTTP API, VPC Link, rotas e integrações | sempre, após [oficina-api](https://github.com/fabianorodrigues/oficina-api) e [oficina-auth-lambda](https://github.com/fabianorodrigues/oficina-auth-lambda) |
 | `terraform/observability/` | Adaptador New Relic (dashboards, alertas, Synthetic Monitor) | opcional — somente após passo 5 (API Gateway) |
 
@@ -113,10 +116,10 @@ aws iam get-role --role-name "<nome-da-role>" --query "Role.Arn" --output text
 
 A variável `LOAD_BALANCER_PROVISIONING_MODE` define como o NLB é criado:
 
-| Modo | Quem cria o NLB | Quem grava `backend-listener-arn` no SSM | Precisa rodar `addons`? |
+| Modo | Quem cria o NLB | Quem grava `backend-listener-arn` no SSM | `addons` |
 | --- | --- | --- | --- |
-| `terraform_nlb` (padrão) | Terraform deste repositório (root `core`) | Terraform deste repositório (root `core`) | não |
-| `aws_lbc` | AWS Load Balancer Controller (via Kubernetes Service) | Workflow do [oficina-api](https://github.com/fabianorodrigues/oficina-api) após o Service subir | sim |
+| `terraform_nlb` (padrão) | Terraform deste repositório (root `core`) | Terraform deste repositório (root `core`) | instala Metrics Server |
+| `aws_lbc` | AWS Load Balancer Controller (via Kubernetes Service) | Workflow do [oficina-api](https://github.com/fabianorodrigues/oficina-api) após o Service subir | instala Metrics Server e AWS Load Balancer Controller |
 
 No modo `aws_lbc`, a variável `TF_VAR_aws_load_balancer_controller_iam_mode` define `node` (padrão, herda da node IAM role) ou `irsa` (role dedicada com OIDC; recomendado).
 
@@ -147,6 +150,7 @@ Configure no GitHub Actions.
 | `LOAD_BALANCER_PROVISIONING_MODE` | Variable | `terraform_nlb` | `terraform_nlb` ou `aws_lbc` |
 | `API_NODE_PORT` | Variable | `30080` | NodePort da API (faixa 30000-32767) |
 | `TF_VAR_aws_load_balancer_controller_iam_mode` | Variable | `node` | `node` ou `irsa`; usado apenas no modo `aws_lbc` |
+| `TF_VAR_metrics_server_chart_version` | Variable | `3.13.0` | Versão parametrizável do chart oficial do Metrics Server; revise antes de uso produtivo |
 | `AUTH_FUNCTION_NAME` | Variable | `oficina-auth-cpf` | Nome da Lambda de autenticação (consumida pelo root `api-gateway`) |
 | `AUTHORIZER_FUNCTION_NAME` | Variable | `oficina-jwt-authorizer` | Nome da Lambda authorizer |
 
@@ -164,9 +168,17 @@ Após o merge na `main`, execute manualmente:
 GitHub Actions > Terraform Apply > Run workflow
 ```
 
-No modo `terraform_nlb`, o job de addons é ignorado. O Target Group permanece sem targets saudáveis até o deploy do [oficina-api](https://github.com/fabianorodrigues/oficina-api); isso é esperado.
+O mesmo workflow aplica o root `terraform/addons` após o core para instalar o Metrics Server. O Metrics Server fornece métricas para HPA e `kubectl top`; ele é necessário para o HPA funcionar plenamente. A observabilidade principal da solução continua sendo o New Relic pelo root `terraform/observability`.
 
-No modo `aws_lbc`, o mesmo workflow também aplica os addons (AWS Load Balancer Controller via Helm).
+No modo `terraform_nlb`, o AWS Load Balancer Controller não é instalado. O Target Group permanece sem targets saudáveis até o deploy do [oficina-api](https://github.com/fabianorodrigues/oficina-api); isso é esperado.
+
+No modo `aws_lbc`, o root `terraform/addons` também instala o AWS Load Balancer Controller via Helm.
+
+### Root addons (passo 2a)
+
+O root `terraform/addons` instala o Metrics Server sempre e instala o AWS Load Balancer Controller somente quando `LOAD_BALANCER_PROVISIONING_MODE=aws_lbc`. O workflow valida permissões de cluster antes do Terraform e, após o apply, valida `deployment/metrics-server` e `apiservice/v1beta1.metrics.k8s.io` em `kube-system`.
+
+A versão padrão do chart do Metrics Server é `3.13.0`, exposta por `metrics_server_chart_version`. Revise a versão e notas de segurança do projeto antes de uso produtivo.
 
 ### Root api-gateway (passo 5)
 
@@ -189,6 +201,7 @@ O workflow descobre a URL pública automaticamente pelo SSM Parameter Store em `
 ### Console — após o root core
 
 - Em EKS, confirme cluster e node group ativos.
+- Em EKS, confirme Metrics Server no namespace `kube-system`.
 - Em ECR, confirme o repositório da API.
 - Em EC2 > Load Balancers (modo `terraform_nlb`), confirme o NLB interno.
 - Em SSM Parameter Store (modo `terraform_nlb`), confirme `/${PROJECT_NAME}/${ENVIRONMENT}/api/backend-listener-arn`.
@@ -210,6 +223,9 @@ $env:ECR_REPOSITORY_NAME="<nome-do-repositorio-ecr>"
 
 aws eks describe-cluster --name $env:EKS_CLUSTER_NAME --region $env:AWS_REGION --query "cluster.status"
 aws eks describe-nodegroup --cluster-name $env:EKS_CLUSTER_NAME --nodegroup-name "$($env:PROJECT_NAME)-node-group" --region $env:AWS_REGION --query "nodegroup.status"
+aws eks update-kubeconfig --name $env:EKS_CLUSTER_NAME --region $env:AWS_REGION
+kubectl get deployment metrics-server -n kube-system
+kubectl get apiservice v1beta1.metrics.k8s.io
 aws ecr describe-repositories --repository-names $env:ECR_REPOSITORY_NAME --region $env:AWS_REGION --query "length(repositories)"
 aws ssm get-parameter --name "/$($env:PROJECT_NAME)/$($env:ENVIRONMENT)/api/backend-listener-arn" --region $env:AWS_REGION --query "Parameter.Name"
 ```
@@ -223,7 +239,7 @@ aws ssm get-parameter --name "/$($env:PROJECT_NAME)/$($env:ENVIRONMENT)/api/publ
 
 ## Observabilidade
 
-O padrão da solução é independente de fornecedor: aplicações expõem sinais por OpenTelemetry/OTLP e logs JSON com campos canônicos como `service.name`, `correlationId` e `eventType`. O root `terraform/observability` é apenas um adaptador opcional para validar esses sinais no New Relic, provisionando dashboards, alertas, workflow de notificação e Synthetic Monitor. Ele é o passo 7 da solução: opcional, mas deve ser aplicado somente após o passo 5 (API Gateway) estar concluído. O padrão é seguro: `enable_new_relic=false` permite `validate` sem credenciais.
+O padrão da solução é independente de fornecedor: aplicações expõem sinais por OpenTelemetry/OTLP e logs JSON com campos canônicos como `service.name`, `correlationId` e `eventType`. O root `terraform/observability` é apenas um adaptador opcional para validar esses sinais no New Relic, provisionando dashboards, alertas, workflow de notificação e Synthetic Monitor. Ele é o passo 7 da solução: opcional, mas o New Relic continua sendo a ferramenta principal de observabilidade quando habilitado e deve ser aplicado somente após o passo 5 (API Gateway) estar concluído. O padrão é seguro: `enable_new_relic=false` permite `validate` sem credenciais.
 
 ### Configurar
 
@@ -279,4 +295,4 @@ kubectl get daemonset -n newrelic
 
 ## Próxima etapa
 
-No modo `terraform_nlb`, executar [oficina-api](https://github.com/fabianorodrigues/oficina-api). No modo `aws_lbc`, executar o root `terraform/addons` antes da API. Em seguida, publicar [oficina-auth-lambda](https://github.com/fabianorodrigues/oficina-auth-lambda), voltar a este repositório para aplicar o root `terraform/api-gateway` e, somente depois da URL pública validada, aplicar o root `terraform/observability` se New Relic for usado.
+Executar [oficina-api](https://github.com/fabianorodrigues/oficina-api) depois do root `terraform/addons`, para que o Metrics Server esteja disponível ao HPA. Em seguida, publicar [oficina-auth-lambda](https://github.com/fabianorodrigues/oficina-auth-lambda), voltar a este repositório para aplicar o root `terraform/api-gateway` e, somente depois da URL pública validada, aplicar o root `terraform/observability` se New Relic for usado.
