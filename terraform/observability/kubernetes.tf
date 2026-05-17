@@ -63,4 +63,24 @@ resource "helm_release" "nri_bundle" {
     name  = "newrelic-logging.enabled"
     value = "true"
   }
+
+  set {
+    name  = "newrelic-logging.enableLinux"
+    value = "true"
+  }
+
+  set {
+    name  = "newrelic-logging.endpoint"
+    value = local.new_relic_log_endpoint
+  }
+
+  set {
+    name  = "newrelic-logging.lowDataMode"
+    value = "false"
+  }
+
+  set {
+    name  = "newrelic-logging.fluentBit.k8sLoggingExclude"
+    value = "false"
+  }
 }
