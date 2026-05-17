@@ -178,9 +178,11 @@ GitHub Actions > Terraform API Gateway Apply > Run workflow
 
 ### Root observability (opcional)
 
-Pull requests e push na `main` executam apenas `validate` e `plan`. O `apply` exige `workflow_dispatch` com o input `apply=true`.
+Pull requests e push na `main` executam apenas `validate`. O `workflow_dispatch` com `apply=false` executa `validate` e `plan`; o `apply` exige `workflow_dispatch` com o input `apply=true`.
 
-Execute o `apply` somente após o passo 5, com API Gateway ativo e URL pública validada. O Synthetic Monitor usa `API_GATEWAY_URL`, disponível apenas depois do root `api-gateway`, e dashboards/APM só terão dados úteis após a API gerar tráfego real.
+Execute o `apply` somente após o passo 5, com API Gateway ativo e URL pública validada. O Synthetic Monitor usa a URL pública do API Gateway, disponível apenas depois do root `api-gateway`, e dashboards/APM só terão dados úteis após a API gerar tráfego real.
+
+O workflow descobre a URL pública automaticamente pelo SSM Parameter Store em `/${PROJECT_NAME}/${ENVIRONMENT}/api/public-base-url`. Se o parâmetro não existir ou não puder ser lido, a observabilidade segue sem Synthetic Monitor.
 
 ## Validação
 
@@ -239,19 +241,19 @@ O padrão da solução é independente de fornecedor: aplicações expõem sinai
 | Nome | Tipo | Default | Descrição |
 | --- | --- | --- | --- |
 | `NEW_RELIC_REGION` | Variable | `US` | `US` ou `EU` |
-| `API_GATEWAY_URL` | Secret ou Variable | vazio (desabilita Synthetic) | URL pública criada pelo root `api-gateway` e usada pelo Synthetic Monitor |
+| `API_GATEWAY_URL` | Secret ou Variable | vazio (usa SSM) | Override opcional da URL pública; se vazio, o workflow busca `/${PROJECT_NAME}/${ENVIRONMENT}/api/public-base-url` no SSM |
 
 A variável Terraform `enable_new_relic` deve ser `true` para criar recursos no New Relic. Para que APM e traces do [oficina-api](https://github.com/fabianorodrigues/oficina-api) cheguem ao New Relic, configure o workflow `deploy-api` com as variáveis OTLP descritas no README da API.
 
 ### Executar
 
-Execute somente após o passo 5 (API Gateway) estar concluído e a URL pública responder em `/health`.
+Execute somente após o passo 5 (API Gateway) estar concluído e a URL pública responder em `/health`. O workflow busca a URL no SSM por padrão; se ela não for encontrada, registra aviso seguro e aplica sem Synthetic Monitor.
 
 ```text
 GitHub Actions > Terraform Observability > Run workflow > apply = true
 ```
 
-Quando aplicado, o workflow instala o chart `nri-bundle` no namespace `newrelic`, cria dashboards, condições de alerta, workflow de notificação e Synthetic Monitor. Os valores sensíveis são mascarados pelo workflow.
+Quando aplicado, o workflow instala o chart `nri-bundle` no namespace `newrelic`, cria dashboards, condições de alerta, workflow de notificação e Synthetic Monitor quando houver URL pública disponível. O `plan` e o `apply` rodam no mesmo job quando `apply=true`, evitando reutilizar um plano salvo obsoleto. Os valores sensíveis são mascarados pelo workflow.
 
 ### Validar
 
@@ -262,7 +264,7 @@ Console New Relic:
 - **Kubernetes**: confirme cluster, nodes, pods e logs dos pods sob a integração `nri-bundle`.
 - **Dashboards**: latência da API, erros 5xx, uptime, CPU e memória Kubernetes, volume diário de OS, tempo médio por status, falhas de OS.
 - **Alertas**: force uma condição controlada ou reduza thresholds temporariamente e confirme a abertura da issue.
-- **Synthetic**: quando `API_GATEWAY_URL` estiver configurada, confirme o monitor de `/health` validando a string `Healthy`.
+- **Synthetic**: quando a URL pública for descoberta no SSM ou informada por `API_GATEWAY_URL`, confirme o monitor de `/health` validando a string `Healthy`.
 
 CLI (PowerShell) — componentes Kubernetes do `nri-bundle`:
 

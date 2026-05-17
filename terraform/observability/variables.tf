@@ -106,7 +106,7 @@ variable "new_relic_notification_email" {
 }
 
 variable "api_gateway_url" {
-  description = "URL publica do API Gateway usada pelo Synthetic Monitor. Quando vazio, o monitor nao e criado."
+  description = "URL publica do API Gateway usada pelo Synthetic Monitor. Normalmente preenchida automaticamente pelo workflow via SSM Parameter Store; pode ser sobrescrita por API_GATEWAY_URL. Quando vazio, o monitor nao e criado."
   type        = string
   default     = ""
   sensitive   = true
