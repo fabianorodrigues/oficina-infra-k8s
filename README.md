@@ -28,7 +28,7 @@ Camada Kubernetes e entrada pública da solução Oficina na AWS.
 
 ## <a id="visão-geral"></a> 🎯 Visão geral
 
-Quatro roots Terraform independentes que provisionam o ambiente Kubernetes, a entrada pública e a observabilidade opcional da solução.
+**Passos 2, 5 e 7** da solução Oficina. Quatro roots Terraform independentes que provisionam o ambiente Kubernetes, a entrada pública e a observabilidade opcional da solução.
 
 - **core**: EKS, Node Group, ECR e NLB interno (modo `terraform_nlb`).
 - **addons**: Metrics Server via Helm (sempre) e AWS Load Balancer Controller via Helm (apenas em modo `aws_lbc`).
@@ -237,6 +237,9 @@ Comportamento:
 > [!NOTE]
 > Em `terraform_nlb`, o Target Group fica sem targets saudáveis até o deploy do `oficina-api`. Isso é esperado.
 
+> [!TIP]
+> **Checkpoint antes do passo 3:** cluster EKS com `status=Active`, ECR criado e (em `terraform_nlb`) SSM `/<projeto>/<ambiente>/api/backend-listener-arn` presente.
+
 ### Passo 5 — api-gateway
 
 Após `oficina-api` (passo 3) e `oficina-auth-lambda` (passo 4):
@@ -246,6 +249,9 @@ GitHub Actions > Terraform API Gateway Apply > Run workflow
 ```
 
 Provisiona HTTP API, VPC Link, rotas (`POST /api/auth/cpf`, `GET /health`, `ANY /api/{proxy+}`), JWT Authorizer e grava `public-base-url` no SSM.
+
+> [!TIP]
+> **Checkpoint antes do passo 6/7:** HTTP API com as três rotas acima, JWT Authorizer ativo na rota `ANY /api/{proxy+}` e SSM `/<projeto>/<ambiente>/api/public-base-url` presente. Os controllers `MeusOrcamentos` e `MinhasOrdensServico` da API só funcionam com JWT emitido pela Lambda `oficina-auth-cpf` (passo 4).
 
 ### Passo 7 — observability (opcional)
 
