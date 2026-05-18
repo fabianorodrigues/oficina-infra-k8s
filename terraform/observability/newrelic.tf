@@ -53,7 +53,7 @@ resource "newrelic_nrql_alert_condition" "ordem_servico_failure" {
   close_violations_on_expiration = true
 
   nrql {
-    query = "FROM Log SELECT count(*) WHERE eventType = 'OrdemServicoFalha' OR message LIKE '%OrdemServicoFalha%' OR log LIKE '%OrdemServicoFalha%'"
+    query = "FROM Log SELECT count(*) WHERE eventType = 'OrdemServicoFalha'"
   }
 
   critical {
@@ -199,7 +199,7 @@ resource "newrelic_one_dashboard_json" "oficina" {
   account_id = local.new_relic_account_id
   json = jsonencode({
     name        = "${local.name_prefix}-observability"
-    description = "Observabilidade da solucao Oficina."
+    description = "Observabilidade da solucao Oficina. Widgets de negocio baseados em Metric dependem de OTLP habilitado; logs com eventType sao complemento."
     permissions = "PUBLIC_READ_ONLY"
     pages = [
       {
@@ -277,40 +277,40 @@ resource "newrelic_one_dashboard_json" "oficina" {
             rawConfiguration = {
               nrqlQueries = [{
                 accountIds = [local.new_relic_account_id]
-                query      = "FROM Span SELECT count(*) WHERE service.name = 'oficina-api' AND span.kind = 'server' AND (name LIKE '%POST /api/ordens-servico%' OR (`http.route` = '/api/ordens-servico' AND (`http.request.method` = 'POST' OR `http.method` = 'POST')) OR (`url.path` = '/api/ordens-servico' AND (`http.request.method` = 'POST' OR `http.method` = 'POST'))) TIMESERIES"
+                query      = "FROM Metric SELECT rate(sum(ordens_servico_criadas), 1 minute) FACET status TIMESERIES"
               }]
             }
           },
           {
-            title         = "Latencia p95 das rotas de OS"
+            title         = "Tempo p95 de processamento de OS"
             layout        = { column = 7, row = 1, width = 6, height = 3 }
             visualization = { id = "viz.line" }
             rawConfiguration = {
               nrqlQueries = [{
                 accountIds = [local.new_relic_account_id]
-                query      = "FROM Span SELECT percentile(duration.ms, 95) WHERE service.name = 'oficina-api' AND span.kind = 'server' AND (name LIKE '%/api/ordens-servico%' OR name LIKE '%/api/minhas-ordens-servico%' OR `http.route` LIKE '/api/ordens-servico%' OR `http.route` LIKE '/api/minhas-ordens-servico%' OR `url.path` LIKE '/api/ordens-servico%' OR `url.path` LIKE '/api/minhas-ordens-servico%') TIMESERIES"
+                query      = "FROM Metric SELECT percentile(ordem_servico_processing_ms, 95) FACET statusAnterior, statusNovo TIMESERIES"
               }]
             }
           },
           {
-            title         = "Erros 4xx/5xx em OS"
+            title         = "Tentativas de e-mail de orcamento"
             layout        = { column = 1, row = 4, width = 6, height = 3 }
             visualization = { id = "viz.line" }
             rawConfiguration = {
               nrqlQueries = [{
                 accountIds = [local.new_relic_account_id]
-                query      = "FROM Span SELECT count(*) WHERE service.name = 'oficina-api' AND span.kind = 'server' AND (name LIKE '%/api/ordens-servico%' OR name LIKE '%/api/minhas-ordens-servico%' OR `http.route` LIKE '/api/ordens-servico%' OR `http.route` LIKE '/api/minhas-ordens-servico%' OR `url.path` LIKE '/api/ordens-servico%' OR `url.path` LIKE '/api/minhas-ordens-servico%') AND (`http.response.status_code` >= 400 OR `http.status_code` >= 400) TIMESERIES"
+                query      = "FROM Metric SELECT rate(sum(emails_orcamento_tentativas), 1 minute) FACET outcome TIMESERIES"
               }]
             }
           },
           {
-            title         = "Eventos de dominio de OS"
+            title         = "Eventos de dominio por log"
             layout        = { column = 7, row = 4, width = 6, height = 3 }
             visualization = { id = "viz.line" }
             rawConfiguration = {
               nrqlQueries = [{
                 accountIds = [local.new_relic_account_id]
-                query      = "FROM Log SELECT count(*) WHERE eventType IS NOT NULL OR message LIKE '%OrdemServico%' OR log LIKE '%OrdemServico%' FACET eventType TIMESERIES"
+                query      = "FROM Log SELECT count(*) WHERE eventType IN ('OrdemServicoCriada', 'OrdemServicoStatusAlterado', 'OrdemServicoFalha', 'EmailOrcamentoFalha') FACET eventType TIMESERIES"
               }]
             }
           }
