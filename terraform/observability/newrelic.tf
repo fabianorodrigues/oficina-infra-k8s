@@ -4,6 +4,11 @@ resource "newrelic_alert_policy" "oficina" {
   account_id          = local.new_relic_account_id
   name                = "${local.name_prefix}-observability"
   incident_preference = "PER_CONDITION"
+
+  lifecycle {
+    # Proteção contra destruição acidental. Para recriação intencional, remover temporariamente em PR específico e justificado.
+    prevent_destroy = true
+  }
 }
 
 resource "newrelic_nrql_alert_condition" "api_5xx" {
@@ -32,6 +37,11 @@ resource "newrelic_nrql_alert_condition" "api_5xx" {
     threshold             = var.api_5xx_threshold
     threshold_duration    = 300
     threshold_occurrences = "AT_LEAST_ONCE"
+  }
+
+  lifecycle {
+    # Proteção contra destruição acidental. Para recriação intencional, remover temporariamente em PR específico e justificado.
+    prevent_destroy = true
   }
 }
 
@@ -62,6 +72,11 @@ resource "newrelic_nrql_alert_condition" "ordem_servico_failure" {
     threshold_duration    = 300
     threshold_occurrences = "AT_LEAST_ONCE"
   }
+
+  lifecycle {
+    # Proteção contra destruição acidental. Para recriação intencional, remover temporariamente em PR específico e justificado.
+    prevent_destroy = true
+  }
 }
 
 resource "newrelic_nrql_alert_condition" "kubernetes_cpu" {
@@ -88,6 +103,11 @@ resource "newrelic_nrql_alert_condition" "kubernetes_cpu" {
     threshold             = var.kubernetes_cpu_threshold_percent
     threshold_duration    = 300
     threshold_occurrences = "ALL"
+  }
+
+  lifecycle {
+    # Proteção contra destruição acidental. Para recriação intencional, remover temporariamente em PR específico e justificado.
+    prevent_destroy = true
   }
 }
 
@@ -116,6 +136,11 @@ resource "newrelic_nrql_alert_condition" "kubernetes_memory" {
     threshold_duration    = 300
     threshold_occurrences = "ALL"
   }
+
+  lifecycle {
+    # Proteção contra destruição acidental. Para recriação intencional, remover temporariamente em PR específico e justificado.
+    prevent_destroy = true
+  }
 }
 
 resource "newrelic_notification_destination" "email" {
@@ -128,6 +153,11 @@ resource "newrelic_notification_destination" "email" {
   property {
     key   = "email"
     value = var.new_relic_notification_email
+  }
+
+  lifecycle {
+    # Proteção contra destruição acidental. Para recriação intencional, remover temporariamente em PR específico e justificado.
+    prevent_destroy = true
   }
 }
 
@@ -143,6 +173,11 @@ resource "newrelic_notification_channel" "email" {
   property {
     key   = "subject"
     value = "Oficina - {{ issueTitle }}"
+  }
+
+  lifecycle {
+    # Proteção contra destruição acidental. Para recriação intencional, remover temporariamente em PR específico e justificado.
+    prevent_destroy = true
   }
 }
 
@@ -168,6 +203,11 @@ resource "newrelic_workflow" "oficina" {
   destination {
     channel_id = newrelic_notification_channel.email[0].id
   }
+
+  lifecycle {
+    # Proteção contra destruição acidental. Para recriação intencional, remover temporariamente em PR específico e justificado.
+    prevent_destroy = true
+  }
 }
 
 resource "newrelic_synthetics_monitor" "health" {
@@ -190,6 +230,11 @@ resource "newrelic_synthetics_monitor" "health" {
   tag {
     key    = "environment"
     values = [var.environment]
+  }
+
+  lifecycle {
+    # Proteção contra destruição acidental. Para recriação intencional, remover temporariamente em PR específico e justificado.
+    prevent_destroy = true
   }
 }
 
@@ -319,4 +364,9 @@ resource "newrelic_one_dashboard_json" "oficina" {
     ]
     variables = []
   })
+
+  lifecycle {
+    # Proteção contra destruição acidental. Para recriação intencional, remover temporariamente em PR específico e justificado.
+    prevent_destroy = true
+  }
 }
