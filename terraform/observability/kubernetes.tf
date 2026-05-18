@@ -8,6 +8,11 @@ resource "kubernetes_namespace" "newrelic" {
       app = "newrelic"
     }
   }
+
+  lifecycle {
+    # Proteção contra destruição acidental. Para recriação intencional, remover temporariamente em PR específico e justificado.
+    prevent_destroy = true
+  }
 }
 
 resource "helm_release" "nri_bundle" {
@@ -82,5 +87,10 @@ resource "helm_release" "nri_bundle" {
   set {
     name  = "newrelic-logging.fluentBit.k8sLoggingExclude"
     value = "false"
+  }
+
+  lifecycle {
+    # Proteção contra destruição acidental. Para recriação intencional, remover temporariamente em PR específico e justificado.
+    prevent_destroy = true
   }
 }

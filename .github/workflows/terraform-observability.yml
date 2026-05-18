@@ -36,6 +36,7 @@ env:
   TF_STATE_BUCKET: ${{ secrets['TF_STATE_BUCKET'] }}
   ENVIRONMENT: ${{ vars.ENVIRONMENT || 'dev' }}
   PROJECT_NAME: ${{ vars.PROJECT_NAME || 'oficina' }}
+  ENABLE_NEW_RELIC: ${{ vars.ENABLE_NEW_RELIC || 'true' }}
   NEW_RELIC_LICENSE_KEY: ${{ secrets['NEW_RELIC_LICENSE_KEY'] }}
   NEW_RELIC_USER_API_KEY: ${{ secrets['NEW_RELIC_USER_API_KEY'] }}
   NEW_RELIC_ACCOUNT_ID: ${{ secrets['NEW_RELIC_ACCOUNT_ID'] }}
@@ -104,20 +105,35 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Prepare variables
+        id: prepare
         shell: bash
         run: |
           set -euo pipefail
+
+          normalize_bool() {
+            printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]'
+          }
+
+          enable_new_relic="$(normalize_bool "${ENABLE_NEW_RELIC:-true}")"
+          if [ "${enable_new_relic}" != "true" ]; then
+            enable_new_relic="false"
+          fi
 
           required_vars=(
             AWS_ACCESS_KEY_ID
             AWS_SECRET_ACCESS_KEY
             AWS_REGION
             TF_STATE_BUCKET
-            NEW_RELIC_LICENSE_KEY
-            NEW_RELIC_USER_API_KEY
-            NEW_RELIC_ACCOUNT_ID
-            NEW_RELIC_NOTIFICATION_EMAIL
           )
+
+          if [ "${enable_new_relic}" = "true" ]; then
+            required_vars+=(
+              NEW_RELIC_LICENSE_KEY
+              NEW_RELIC_USER_API_KEY
+              NEW_RELIC_ACCOUNT_ID
+              NEW_RELIC_NOTIFICATION_EMAIL
+            )
+          fi
 
           missing=0
           for var_name in "${required_vars[@]}"; do
@@ -132,50 +148,65 @@ jobs:
           fi
 
           for value in \
-            "${NEW_RELIC_LICENSE_KEY}" \
-            "${NEW_RELIC_USER_API_KEY}" \
-            "${NEW_RELIC_ACCOUNT_ID}" \
-            "${NEW_RELIC_NOTIFICATION_EMAIL}"; do
+            "${NEW_RELIC_LICENSE_KEY:-}" \
+            "${NEW_RELIC_USER_API_KEY:-}" \
+            "${NEW_RELIC_ACCOUNT_ID:-}" \
+            "${NEW_RELIC_NOTIFICATION_EMAIL:-}" \
+            "${API_GATEWAY_URL:-}"; do
             if [ -n "${value}" ]; then
               echo "::add-mask::${value}"
             fi
           done
 
-          api_gateway_url_value="${API_GATEWAY_URL:-}"
-          if [ -n "${api_gateway_url_value}" ]; then
-            echo "::add-mask::${api_gateway_url_value}"
-          else
-            if api_gateway_url_value="$(aws ssm get-parameter \
-                --name "/${PROJECT_NAME}/${ENVIRONMENT}/api/public-base-url" \
-                --region "${AWS_REGION}" \
-                --query "Parameter.Value" \
-                --output text 2>/dev/null)"; then
-              if [ -n "${api_gateway_url_value}" ] && [ "${api_gateway_url_value}" != "None" ]; then
-                echo "::add-mask::${api_gateway_url_value}"
+          api_gateway_url_value=""
+          if [ "${enable_new_relic}" = "true" ]; then
+            api_gateway_url_value="${API_GATEWAY_URL:-}"
+            if [ -n "${api_gateway_url_value}" ]; then
+              echo "::add-mask::${api_gateway_url_value}"
+            else
+              if api_gateway_url_value="$(aws ssm get-parameter \
+                  --name "/${PROJECT_NAME}/${ENVIRONMENT}/api/public-base-url" \
+                  --region "${AWS_REGION}" \
+                  --query "Parameter.Value" \
+                  --output text 2>/dev/null)"; then
+                if [ -n "${api_gateway_url_value}" ] && [ "${api_gateway_url_value}" != "None" ]; then
+                  echo "::add-mask::${api_gateway_url_value}"
+                else
+                  echo "Warning: API Gateway public URL was not found or could not be read. Synthetic Monitor will be disabled."
+                  api_gateway_url_value=""
+                fi
               else
                 echo "Warning: API Gateway public URL was not found or could not be read. Synthetic Monitor will be disabled."
                 api_gateway_url_value=""
               fi
-            else
-              echo "Warning: API Gateway public URL was not found or could not be read. Synthetic Monitor will be disabled."
-              api_gateway_url_value=""
             fi
           fi
 
           {
-            printf 'TF_VAR_enable_new_relic=true\n'
+            printf 'OBSERVABILITY_ENABLED=%s\n' "${enable_new_relic}"
+            printf 'TF_VAR_enable_new_relic=%s\n' "${enable_new_relic}"
             printf 'TF_VAR_aws_region=%s\n' "${AWS_REGION}"
             printf 'TF_VAR_remote_state_region=%s\n' "${AWS_REGION}"
             printf 'TF_VAR_remote_state_bucket=%s\n' "${TF_STATE_BUCKET}"
             printf 'TF_VAR_project_name=%s\n' "${PROJECT_NAME}"
             printf 'TF_VAR_environment=%s\n' "${ENVIRONMENT}"
             printf 'TF_VAR_new_relic_region=%s\n' "${NEW_RELIC_REGION}"
-            printf 'TF_VAR_new_relic_license_key=%s\n' "${NEW_RELIC_LICENSE_KEY}"
-            printf 'TF_VAR_new_relic_user_api_key=%s\n' "${NEW_RELIC_USER_API_KEY}"
-            printf 'TF_VAR_new_relic_account_id=%s\n' "${NEW_RELIC_ACCOUNT_ID}"
-            printf 'TF_VAR_new_relic_notification_email=%s\n' "${NEW_RELIC_NOTIFICATION_EMAIL}"
+            printf 'TF_VAR_new_relic_license_key=%s\n' "${NEW_RELIC_LICENSE_KEY:-}"
+            printf 'TF_VAR_new_relic_user_api_key=%s\n' "${NEW_RELIC_USER_API_KEY:-}"
+            printf 'TF_VAR_new_relic_account_id=%s\n' "${NEW_RELIC_ACCOUNT_ID:-}"
+            printf 'TF_VAR_new_relic_notification_email=%s\n' "${NEW_RELIC_NOTIFICATION_EMAIL:-}"
             printf 'TF_VAR_api_gateway_url=%s\n' "${api_gateway_url_value}"
           } >> "${GITHUB_ENV}"
+
+          printf 'enabled=%s\n' "${enable_new_relic}" >> "${GITHUB_OUTPUT}"
+
+      - name: Setup kubectl
+        if: steps.prepare.outputs.enabled == 'true'
+        uses: azure/setup-kubectl@v4
+
+      - name: Setup Helm
+        if: steps.prepare.outputs.enabled == 'true'
+        uses: azure/setup-helm@v4
 
       - name: Terraform init
         shell: bash
@@ -191,13 +222,49 @@ jobs:
 
           terraform init -backend-config=backend.hcl
 
-      - name: Terraform plan
+      - name: Configure observability cluster access
+        if: steps.prepare.outputs.enabled == 'true'
         shell: bash
         run: |
           set -euo pipefail
 
+          cluster_name="$(aws s3 cp "s3://${TF_STATE_BUCKET}/oficina-infra-k8s/${ENVIRONMENT}/core/terraform.tfstate" - \
+            --region "${AWS_REGION}" 2>/dev/null \
+            | jq -r '.outputs.cluster_name.value // empty')"
+
+          if [ -z "${cluster_name}" ]; then
+            echo "Observability depends on the core state and EKS cluster."
+            exit 1
+          fi
+
+          echo "::add-mask::${cluster_name}"
+          echo "KUBECONFIG=${RUNNER_TEMP}/oficina-observability-kubeconfig" >> "${GITHUB_ENV}"
+          export KUBECONFIG="${RUNNER_TEMP}/oficina-observability-kubeconfig"
+          aws eks update-kubeconfig --name "${cluster_name}" --region "${AWS_REGION}" >/dev/null 2>&1
+
+      - name: Discover reusable observability resources
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Discovery-only mode: resources marked as would import may still appear as create in this plan because state is not changed until apply=true."
+          bash ../../scripts/adopt-observability-state.sh --mode plan
+
+      - name: Terraform plan and validate actions
+        shell: bash
+        run: |
+          set -euo pipefail
+          trap 'rm -f tfplan.json' EXIT
+
           if ! terraform plan -out=tfplan >/tmp/terraform-observability-plan.log 2>&1; then
             echo "Terraform observability plan failed."
+            exit 1
+          fi
+
+          terraform show -json tfplan > tfplan.json
+
+          if jq -e 'any(.resource_changes[]?; any(.change.actions[]?; . == "delete"))' tfplan.json >/dev/null; then
+            echo "Plano bloqueado: delete/replace detectado em recursos de observabilidade."
             exit 1
           fi
 
@@ -226,20 +293,35 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Prepare variables
+        id: prepare
         shell: bash
         run: |
           set -euo pipefail
+
+          normalize_bool() {
+            printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]'
+          }
+
+          enable_new_relic="$(normalize_bool "${ENABLE_NEW_RELIC:-true}")"
+          if [ "${enable_new_relic}" != "true" ]; then
+            enable_new_relic="false"
+          fi
 
           required_vars=(
             AWS_ACCESS_KEY_ID
             AWS_SECRET_ACCESS_KEY
             AWS_REGION
             TF_STATE_BUCKET
-            NEW_RELIC_LICENSE_KEY
-            NEW_RELIC_USER_API_KEY
-            NEW_RELIC_ACCOUNT_ID
-            NEW_RELIC_NOTIFICATION_EMAIL
           )
+
+          if [ "${enable_new_relic}" = "true" ]; then
+            required_vars+=(
+              NEW_RELIC_LICENSE_KEY
+              NEW_RELIC_USER_API_KEY
+              NEW_RELIC_ACCOUNT_ID
+              NEW_RELIC_NOTIFICATION_EMAIL
+            )
+          fi
 
           missing=0
           for var_name in "${required_vars[@]}"; do
@@ -254,50 +336,65 @@ jobs:
           fi
 
           for value in \
-            "${NEW_RELIC_LICENSE_KEY}" \
-            "${NEW_RELIC_USER_API_KEY}" \
-            "${NEW_RELIC_ACCOUNT_ID}" \
-            "${NEW_RELIC_NOTIFICATION_EMAIL}"; do
+            "${NEW_RELIC_LICENSE_KEY:-}" \
+            "${NEW_RELIC_USER_API_KEY:-}" \
+            "${NEW_RELIC_ACCOUNT_ID:-}" \
+            "${NEW_RELIC_NOTIFICATION_EMAIL:-}" \
+            "${API_GATEWAY_URL:-}"; do
             if [ -n "${value}" ]; then
               echo "::add-mask::${value}"
             fi
           done
 
-          api_gateway_url_value="${API_GATEWAY_URL:-}"
-          if [ -n "${api_gateway_url_value}" ]; then
-            echo "::add-mask::${api_gateway_url_value}"
-          else
-            if api_gateway_url_value="$(aws ssm get-parameter \
-                --name "/${PROJECT_NAME}/${ENVIRONMENT}/api/public-base-url" \
-                --region "${AWS_REGION}" \
-                --query "Parameter.Value" \
-                --output text 2>/dev/null)"; then
-              if [ -n "${api_gateway_url_value}" ] && [ "${api_gateway_url_value}" != "None" ]; then
-                echo "::add-mask::${api_gateway_url_value}"
+          api_gateway_url_value=""
+          if [ "${enable_new_relic}" = "true" ]; then
+            api_gateway_url_value="${API_GATEWAY_URL:-}"
+            if [ -n "${api_gateway_url_value}" ]; then
+              echo "::add-mask::${api_gateway_url_value}"
+            else
+              if api_gateway_url_value="$(aws ssm get-parameter \
+                  --name "/${PROJECT_NAME}/${ENVIRONMENT}/api/public-base-url" \
+                  --region "${AWS_REGION}" \
+                  --query "Parameter.Value" \
+                  --output text 2>/dev/null)"; then
+                if [ -n "${api_gateway_url_value}" ] && [ "${api_gateway_url_value}" != "None" ]; then
+                  echo "::add-mask::${api_gateway_url_value}"
+                else
+                  echo "Warning: API Gateway public URL was not found or could not be read. Synthetic Monitor will be disabled."
+                  api_gateway_url_value=""
+                fi
               else
                 echo "Warning: API Gateway public URL was not found or could not be read. Synthetic Monitor will be disabled."
                 api_gateway_url_value=""
               fi
-            else
-              echo "Warning: API Gateway public URL was not found or could not be read. Synthetic Monitor will be disabled."
-              api_gateway_url_value=""
             fi
           fi
 
           {
-            printf 'TF_VAR_enable_new_relic=true\n'
+            printf 'OBSERVABILITY_ENABLED=%s\n' "${enable_new_relic}"
+            printf 'TF_VAR_enable_new_relic=%s\n' "${enable_new_relic}"
             printf 'TF_VAR_aws_region=%s\n' "${AWS_REGION}"
             printf 'TF_VAR_remote_state_region=%s\n' "${AWS_REGION}"
             printf 'TF_VAR_remote_state_bucket=%s\n' "${TF_STATE_BUCKET}"
             printf 'TF_VAR_project_name=%s\n' "${PROJECT_NAME}"
             printf 'TF_VAR_environment=%s\n' "${ENVIRONMENT}"
             printf 'TF_VAR_new_relic_region=%s\n' "${NEW_RELIC_REGION}"
-            printf 'TF_VAR_new_relic_license_key=%s\n' "${NEW_RELIC_LICENSE_KEY}"
-            printf 'TF_VAR_new_relic_user_api_key=%s\n' "${NEW_RELIC_USER_API_KEY}"
-            printf 'TF_VAR_new_relic_account_id=%s\n' "${NEW_RELIC_ACCOUNT_ID}"
-            printf 'TF_VAR_new_relic_notification_email=%s\n' "${NEW_RELIC_NOTIFICATION_EMAIL}"
+            printf 'TF_VAR_new_relic_license_key=%s\n' "${NEW_RELIC_LICENSE_KEY:-}"
+            printf 'TF_VAR_new_relic_user_api_key=%s\n' "${NEW_RELIC_USER_API_KEY:-}"
+            printf 'TF_VAR_new_relic_account_id=%s\n' "${NEW_RELIC_ACCOUNT_ID:-}"
+            printf 'TF_VAR_new_relic_notification_email=%s\n' "${NEW_RELIC_NOTIFICATION_EMAIL:-}"
             printf 'TF_VAR_api_gateway_url=%s\n' "${api_gateway_url_value}"
           } >> "${GITHUB_ENV}"
+
+          printf 'enabled=%s\n' "${enable_new_relic}" >> "${GITHUB_OUTPUT}"
+
+      - name: Setup kubectl
+        if: steps.prepare.outputs.enabled == 'true'
+        uses: azure/setup-kubectl@v4
+
+      - name: Setup Helm
+        if: steps.prepare.outputs.enabled == 'true'
+        uses: azure/setup-helm@v4
 
       - name: Terraform init
         shell: bash
@@ -313,13 +410,48 @@ jobs:
 
           terraform init -backend-config=backend.hcl
 
-      - name: Terraform plan
+      - name: Configure observability cluster access
+        if: steps.prepare.outputs.enabled == 'true'
         shell: bash
         run: |
           set -euo pipefail
 
+          cluster_name="$(aws s3 cp "s3://${TF_STATE_BUCKET}/oficina-infra-k8s/${ENVIRONMENT}/core/terraform.tfstate" - \
+            --region "${AWS_REGION}" 2>/dev/null \
+            | jq -r '.outputs.cluster_name.value // empty')"
+
+          if [ -z "${cluster_name}" ]; then
+            echo "Observability depends on the core state and EKS cluster."
+            exit 1
+          fi
+
+          echo "::add-mask::${cluster_name}"
+          echo "KUBECONFIG=${RUNNER_TEMP}/oficina-observability-kubeconfig" >> "${GITHUB_ENV}"
+          export KUBECONFIG="${RUNNER_TEMP}/oficina-observability-kubeconfig"
+          aws eks update-kubeconfig --name "${cluster_name}" --region "${AWS_REGION}" >/dev/null 2>&1
+
+      - name: Adopt reusable observability resources
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          bash ../../scripts/adopt-observability-state.sh --mode apply
+
+      - name: Terraform plan and validate actions
+        shell: bash
+        run: |
+          set -euo pipefail
+          trap 'rm -f tfplan.json' EXIT
+
           if ! terraform plan -out=tfplan >/tmp/terraform-observability-plan.log 2>&1; then
             echo "Terraform observability plan failed."
+            exit 1
+          fi
+
+          terraform show -json tfplan > tfplan.json
+
+          if jq -e 'any(.resource_changes[]?; any(.change.actions[]?; . == "delete"))' tfplan.json >/dev/null; then
+            echo "Plano bloqueado: delete/replace detectado em recursos de observabilidade."
             exit 1
           fi
 
